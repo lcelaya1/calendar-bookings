@@ -29,6 +29,36 @@ function json(data: unknown, status = 200) {
   })
 }
 
+function pad(n: number) {
+  return String(n).padStart(2, '0')
+}
+
+function addMinutesLocal(date: string, time: string, minutes: number) {
+  const [year, month, day] = date.split('-').map(Number)
+  const [hours, mins] = time.split(':').map(Number)
+  const value = new Date(Date.UTC(year, month - 1, day, hours, mins + minutes))
+  return `${value.getUTCFullYear()}-${pad(value.getUTCMonth() + 1)}-${pad(value.getUTCDate())}T${pad(value.getUTCHours())}:${pad(value.getUTCMinutes())}:00`
+}
+
+function madridOffset(date: string, time: string) {
+  const [year, month, day] = date.split('-').map(Number)
+  const [hours, mins] = time.split(':').map(Number)
+  const value = new Date(Date.UTC(year, month - 1, day, hours, mins))
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Madrid',
+    timeZoneName: 'shortOffset',
+  }).formatToParts(value)
+  const offset = parts.find(part => part.type === 'timeZoneName')?.value ?? 'GMT+1'
+  const match = offset.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/)
+  if (!match) return '+01:00'
+  return `${match[1]}${pad(Number(match[2]))}:${match[3] ?? '00'}`
+}
+
+function madridDateTime(date: string, time: string) {
+  const clock = time.slice(0, 5)
+  return `${date}T${clock}:00${madridOffset(date, clock)}`
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
 
@@ -39,8 +69,10 @@ Deno.serve(async (req) => {
 
     if (action === 'create') {
       const { title, description, date, time, durationMinutes, reviewerEmail, leinnerEmail, leinnerName } = params
-      const start = new Date(`${date}T${time}`)
-      const end = new Date(start.getTime() + durationMinutes * 60_000)
+      const start = madridDateTime(date, time)
+      const endTime = addMinutesLocal(date, time, durationMinutes)
+      const [endDate, endClock] = endTime.split('T')
+      const end = madridDateTime(endDate, endClock.slice(0, 5))
       const requestId = `prb-${Date.now()}-${Math.random().toString(36).slice(2)}`
 
       const res = await fetch(`${calUrl}?conferenceDataVersion=1&sendUpdates=all`, {
@@ -49,8 +81,8 @@ Deno.serve(async (req) => {
         body: JSON.stringify({
           summary: title,
           description: `${description}\n\nLEINNer: ${leinnerName}`,
-          start: { dateTime: start.toISOString(), timeZone: 'Europe/Madrid' },
-          end: { dateTime: end.toISOString(), timeZone: 'Europe/Madrid' },
+          start: { dateTime: start, timeZone: 'Europe/Madrid' },
+          end: { dateTime: end, timeZone: 'Europe/Madrid' },
           attendees: [{ email: reviewerEmail }, { email: leinnerEmail }],
           conferenceData: {
             createRequest: { requestId, conferenceSolutionKey: { type: 'hangoutsMeet' } },

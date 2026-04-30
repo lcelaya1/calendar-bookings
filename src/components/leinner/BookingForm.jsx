@@ -1,6 +1,12 @@
 import { useState } from 'react'
 import { supabase } from '../../lib/supabase'
 
+const DEFAULT_FORM_FIELDS = [
+  { id: 'full_name', label: 'Full name', type: 'text', placeholder: 'Your full name', required: true, system: 'name' },
+  { id: 'email', label: 'Email address', type: 'email', placeholder: 'you@example.com', required: true, system: 'email' },
+  { id: 'project', label: 'Proyecto al que perteneces', type: 'text', placeholder: 'Nombre de tu proyecto', required: true, system: 'project' },
+]
+
 function fmtSlot(slot) {
   const d = new Date(slot.date + 'T00:00:00')
   const date = d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })
@@ -8,14 +14,22 @@ function fmtSlot(slot) {
   return `${date} · ${h}:${m} (${slot.duration_minutes} min)`
 }
 
-export default function BookingForm({ slot, onBack, onConfirmed, reviewerId, eventId }) {
-  const [name, setName] = useState('')
-  const [email, setEmail] = useState('')
-  const [project, setProject] = useState('')
+function normalizeFormFields(fields) {
+  return Array.isArray(fields) && fields.length > 0 ? fields : DEFAULT_FORM_FIELDS
+}
+
+function getSystemValue(fields, values, system, fallback = '') {
+  const field = fields.find(f => f.system === system || f.id === system)
+  return field ? (values[field.id] ?? '').trim() : fallback
+}
+
+export default function BookingForm({ slot, onBack, onConfirmed, reviewerId, eventId, formFields }) {
+  const fields = normalizeFormFields(formFields)
+  const [values, setValues] = useState(() => fields.reduce((acc, field) => ({ ...acc, [field.id]: '' }), {}))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const canSubmit = name.trim() !== '' && email.trim() !== '' && project.trim() !== ''
+  const canSubmit = fields.every(field => !field.required || (values[field.id] ?? '').trim() !== '')
 
   async function submit(e) {
     e.preventDefault()
@@ -23,12 +37,24 @@ export default function BookingForm({ slot, onBack, onConfirmed, reviewerId, eve
     setError('')
     setLoading(true)
 
+    const name = getSystemValue(fields, values, 'name', 'LEINNer')
+    const email = getSystemValue(fields, values, 'email').toLowerCase()
+    const project = getSystemValue(fields, values, 'project')
+    const formResponses = fields.map(field => ({
+      id: field.id,
+      label: field.label,
+      type: field.type ?? 'text',
+      required: !!field.required,
+      system: field.system ?? null,
+      value: values[field.id] ?? '',
+    }))
+
     const { data, error: err } = await supabase.rpc('book_slot', {
       p_date: slot.date,
       p_time: slot.time,
-      p_leinner_name: name.trim(),
-      p_leinner_email: email.trim().toLowerCase(),
-      p_leinner_project: project.trim(),
+      p_leinner_name: name,
+      p_leinner_email: email,
+      p_leinner_project: project,
       ...(reviewerId ? { p_reviewer_id: reviewerId } : {}),
       ...(eventId ? { p_event_id: eventId } : {}),
     })
@@ -40,7 +66,16 @@ export default function BookingForm({ slot, onBack, onConfirmed, reviewerId, eve
       return
     }
 
-    onConfirmed({ bookingId: data.booking_id, reviewerId: data.reviewer_id, name: name.trim(), email: email.trim().toLowerCase(), project: project.trim(), slot })
+    await supabase
+      .from('bookings')
+      .update({ form_responses: formResponses })
+      .eq('id', data.booking_id)
+
+    onConfirmed({ bookingId: data.booking_id, reviewerId: data.reviewer_id, name, email, project, formResponses, slot })
+  }
+
+  function updateValue(fieldId, value) {
+    setValues(prev => ({ ...prev, [fieldId]: value }))
   }
 
   return (
@@ -58,42 +93,20 @@ export default function BookingForm({ slot, onBack, onConfirmed, reviewerId, eve
       </div>
 
       <form onSubmit={submit} className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-semibold text-gray-600">
-            Full name <span className="text-red-500">*</span>
-          </label>
-          <input
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="Your full name"
-            className="border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-          />
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-semibold text-gray-600">
-            Email address <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="email"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            className="border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-          />
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-semibold text-gray-600">
-            Proyecto al que perteneces <span className="text-red-500">*</span>
-          </label>
-          <input
-            value={project}
-            onChange={e => setProject(e.target.value)}
-            placeholder="Nombre de tu proyecto"
-            className="border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-          />
-        </div>
+        {fields.map(field => (
+          <div key={field.id} className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-gray-600">
+              {field.label} {field.required && <span className="text-red-500">*</span>}
+            </label>
+            <input
+              type={field.type === 'email' ? 'email' : 'text'}
+              value={values[field.id] ?? ''}
+              onChange={e => updateValue(field.id, e.target.value)}
+              placeholder={field.placeholder ?? ''}
+              className="border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+          </div>
+        ))}
 
         {error && (
           <p className="text-red-500 text-sm bg-red-50 border border-red-100 rounded-lg px-3 py-2">

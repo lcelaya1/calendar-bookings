@@ -3,6 +3,14 @@ import { supabase } from '../../lib/supabase'
 import SlotManager from './SlotManager'
 
 const DURATION_OPTIONS = [15, 20, 30, 45, 60, 90]
+const BREAK_OPTIONS = [0, 5, 10, 15, 20, 30]
+const MIN_NOTICE_OPTIONS = [0, 1, 2, 4, 8, 12, 24, 48]
+const DEFAULT_FORM_FIELDS = [
+  { id: 'full_name', label: 'Full name', type: 'text', placeholder: 'Your full name', required: true, system: 'name' },
+  { id: 'email', label: 'Email address', type: 'email', placeholder: 'you@example.com', required: true, system: 'email' },
+  { id: 'project', label: 'Proyecto al que perteneces', type: 'text', placeholder: 'Nombre de tu proyecto', required: true, system: 'project' },
+]
+const DEFAULT_CALENDAR_TITLE_TEMPLATE = '[ONLINE] {reviewer_first_name} - {event_name} ({leinner_name})'
 
 const EVENT_TYPES = [
   {
@@ -66,6 +74,48 @@ function MethodToggle({ value, onChange }) {
   )
 }
 
+function normalizeFormFields(fields) {
+  return Array.isArray(fields) && fields.length > 0 ? fields : DEFAULT_FORM_FIELDS
+}
+
+function createCustomField() {
+  return {
+    id: `field_${Date.now()}`,
+    label: 'New question',
+    type: 'text',
+    placeholder: '',
+    required: false,
+  }
+}
+
+function eventSlug(name) {
+  const slug = (name ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return slug || 'event'
+}
+
+function eventBookingPath(event) {
+  return `/book/${eventSlug(event.name)}/${event.id}`
+}
+
+function previewCalendarTitle(template, eventName) {
+  return (template || DEFAULT_CALENDAR_TITLE_TEMPLATE).replace(/\{(\w+)\}/g, (_, key) => {
+    const values = {
+      event_name: eventName || 'Event name',
+      reviewer_name: 'Laura Celaya',
+      reviewer_first_name: 'LAURA',
+      leinner_name: 'Prueba',
+      leinner_email: 'leinner@example.com',
+      project: 'Proyecto',
+    }
+    return values[key] ?? ''
+  })
+}
+
 // ─── List View ───────────────────────────────────────────────────────────────
 
 function EventList({ onSelect }) {
@@ -79,6 +129,7 @@ function EventList({ onSelect }) {
   const [selectedType, setSelectedType] = useState(null)
   const [name, setName] = useState('')
   const [duration, setDuration] = useState(45)
+  const [breakTime, setBreakTime] = useState(10)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => { load() }, [])
@@ -105,7 +156,15 @@ function EventList({ onSelect }) {
     const method = selectedType === 'language' ? 'language' : 'round_robin'
     const { data, error: err } = await supabase
       .from('events')
-      .insert({ name: name.trim(), assignment_method: method, duration_minutes: Number(duration) })
+      .insert({
+        name: name.trim(),
+        assignment_method: method,
+        duration_minutes: Number(duration),
+        break_minutes: Number(breakTime),
+        min_notice_hours: 4,
+        form_fields: DEFAULT_FORM_FIELDS,
+        calendar_title_template: DEFAULT_CALENDAR_TITLE_TEMPLATE,
+      })
       .select()
       .single()
     setSaving(false)
@@ -113,6 +172,7 @@ function EventList({ onSelect }) {
     setPanel(null)
     setName('')
     setDuration(45)
+    setBreakTime(10)
     setSelectedType(null)
     onSelect(data)
   }
@@ -121,12 +181,12 @@ function EventList({ onSelect }) {
 
   function copyLink(ev, e) {
     e.stopPropagation()
-    navigator.clipboard.writeText(`${window.location.origin}/book/${ev.id}`)
+    navigator.clipboard.writeText(`${window.location.origin}${eventBookingPath(ev)}`)
     setCopiedId(ev.id)
     setTimeout(() => setCopiedId(null), 2000)
   }
 
-  function openCreate() { setPanel('type'); setSelectedType(null); setName(''); setDuration(45) }
+  function openCreate() { setPanel('type'); setSelectedType(null); setName(''); setDuration(45); setBreakTime(10) }
   function closePanel() { setPanel(null); setSelectedType(null) }
 
   if (loading) return <p className="text-sm text-gray-400">Loading…</p>
@@ -320,6 +380,26 @@ function EventList({ onSelect }) {
                   </div>
                 </div>
 
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-medium text-gray-500">Break between slots</label>
+                  <div className="flex flex-wrap gap-2">
+                    {BREAK_OPTIONS.map(m => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setBreakTime(m)}
+                        className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+                          breakTime === m
+                            ? 'bg-indigo-600 text-white border-indigo-600'
+                            : 'border-gray-200 text-gray-600 hover:border-indigo-300'
+                        }`}
+                      >
+                        {m === 0 ? 'No break' : `${m} min`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 {error && <p className="text-red-500 text-sm">{error}</p>}
               </div>
             )}
@@ -385,10 +465,12 @@ function EventDetail({ initialEvent, onBack }) {
   async function updateField(field, value) {
     const updated = { ...event, [field]: value }
     setEvent(updated)
+    setError('')
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(async () => {
       setSavingField(field)
-      await supabase.from('events').update({ [field]: value }).eq('id', event.id)
+      const { error: err } = await supabase.from('events').update({ [field]: value }).eq('id', event.id)
+      if (err) setError(err.message)
       setSavingField(null)
     }, 600)
   }
@@ -397,8 +479,10 @@ function EventDetail({ initialEvent, onBack }) {
   async function updateFieldNow(field, value) {
     const updated = { ...event, [field]: value }
     setEvent(updated)
+    setError('')
     setSavingField(field)
-    await supabase.from('events').update({ [field]: value }).eq('id', event.id)
+    const { error: err } = await supabase.from('events').update({ [field]: value }).eq('id', event.id)
+    if (err) setError(err.message)
     setSavingField(null)
   }
 
@@ -431,7 +515,7 @@ function EventDetail({ initialEvent, onBack }) {
   }
 
   function copyLink() {
-    const url = `${window.location.origin}/book/${event.id}`
+    const url = `${window.location.origin}${eventBookingPath(event)}`
     navigator.clipboard.writeText(url).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
@@ -443,8 +527,31 @@ function EventDetail({ initialEvent, onBack }) {
 
   if (loading) return <p className="text-sm text-gray-400">Loading…</p>
 
-  const bookingUrl = `${window.location.origin}/book/${event.id}`
+  const bookingUrl = `${window.location.origin}${eventBookingPath(event)}`
   const slotManagerReviewers = eventReviewers.map(er => er.reviewers).filter(Boolean)
+  const eventDuration = event.duration_minutes ?? 45
+  const eventBreakTime = event.break_minutes ?? 10
+  const eventMinNoticeHours = event.min_notice_hours ?? 4
+  const formFields = normalizeFormFields(event.form_fields)
+
+  function updateFormFields(nextFields) {
+    updateFieldNow('form_fields', nextFields)
+  }
+
+  function updateFormField(fieldId, patch) {
+    updateFormFields(formFields.map(field => (
+      field.id === fieldId ? { ...field, ...patch } : field
+    )))
+  }
+
+  function addFormField() {
+    updateFormFields([...formFields, createCustomField()])
+  }
+
+  function removeFormField(fieldId) {
+    const nextFields = formFields.filter(field => field.id !== fieldId)
+    updateFormFields(nextFields.length > 0 ? nextFields : DEFAULT_FORM_FIELDS)
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -467,6 +574,12 @@ function EventDetail({ initialEvent, onBack }) {
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex flex-col gap-5">
         <h2 className="text-sm font-semibold text-gray-700">Event settings</h2>
 
+        {error && (
+          <p className="text-red-500 text-sm bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+            {error}
+          </p>
+        )}
+
         {/* Open/Closed toggle */}
         <div className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-3">
           <div>
@@ -483,7 +596,7 @@ function EventDetail({ initialEvent, onBack }) {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-gray-500">
               Event name {savingField === 'name' && <span className="text-indigo-400">saving…</span>}
@@ -494,17 +607,48 @@ function EventDetail({ initialEvent, onBack }) {
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
             />
           </div>
+
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-gray-500">
               Duration {savingField === 'duration_minutes' && <span className="text-indigo-400">saving…</span>}
             </label>
             <select
-              value={event.duration_minutes}
-              onChange={e => updateField('duration_minutes', Number(e.target.value))}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              value={eventDuration}
+              onChange={e => updateFieldNow('duration_minutes', Number(e.target.value))}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
             >
               {DURATION_OPTIONS.map(m => (
                 <option key={m} value={m}>{m < 60 ? `${m} min` : `${m / 60}h`}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-gray-500">
+              Time between slots {savingField === 'break_minutes' && <span className="text-indigo-400">saving…</span>}
+            </label>
+            <select
+              value={eventBreakTime}
+              onChange={e => updateFieldNow('break_minutes', Number(e.target.value))}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            >
+              {BREAK_OPTIONS.map(m => (
+                <option key={m} value={m}>{m === 0 ? 'No break' : `${m} min`}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-gray-500">
+              Minimum booking notice {savingField === 'min_notice_hours' && <span className="text-indigo-400">saving…</span>}
+            </label>
+            <select
+              value={eventMinNoticeHours}
+              onChange={e => updateFieldNow('min_notice_hours', Number(e.target.value))}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            >
+              {MIN_NOTICE_OPTIONS.map(h => (
+                <option key={h} value={h}>{h === 0 ? 'No minimum' : `${h}h before`}</option>
               ))}
             </select>
           </div>
@@ -512,14 +656,20 @@ function EventDetail({ initialEvent, onBack }) {
 
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-gray-500">
-            Description {savingField === 'event_desc' && <span className="text-indigo-400">saving…</span>}
+            Calendar event title {savingField === 'calendar_title_template' && <span className="text-indigo-400">saving…</span>}
           </label>
-          <textarea
-            value={event.event_desc ?? ''}
-            onChange={e => updateField('event_desc', e.target.value)}
-            rows={3}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          <input
+            value={event.calendar_title_template ?? DEFAULT_CALENDAR_TITLE_TEMPLATE}
+            onChange={e => updateField('calendar_title_template', e.target.value)}
+            onBlur={e => updateFieldNow('calendar_title_template', e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
           />
+          <p className="text-xs text-gray-400">
+            Available placeholders: {'{event_name}'}, {'{reviewer_name}'}, {'{reviewer_first_name}'}, {'{leinner_name}'}, {'{leinner_email}'}, {'{project}'}
+          </p>
+          <p className="text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
+            Preview: {previewCalendarTitle(event.calendar_title_template, event.name)}
+          </p>
         </div>
 
         <div className="flex items-center gap-2">
@@ -531,6 +681,76 @@ function EventDetail({ initialEvent, onBack }) {
           }`}>
             {event.assignment_method === 'language' ? '🌐 Language-based' : '⟳ Round Robin'}
           </span>
+        </div>
+      </div>
+
+      {/* Booking form section */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex flex-col gap-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">Booking form</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Choose which fields LEINNers fill in when confirming a slot.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={addFormField}
+            className="text-sm font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
+          >
+            + Add field
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          {formFields.map((field, idx) => (
+            <div key={field.id} className="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr_0.8fr_auto_auto] gap-2 items-end bg-gray-50 rounded-lg px-3 py-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] font-medium text-gray-500">Label</label>
+                <input
+                  value={field.label}
+                  onChange={e => updateFormField(field.id, { label: e.target.value })}
+                  className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] font-medium text-gray-500">Placeholder</label>
+                <input
+                  value={field.placeholder ?? ''}
+                  onChange={e => updateFormField(field.id, { placeholder: e.target.value })}
+                  className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] font-medium text-gray-500">Type</label>
+                <select
+                  value={field.type ?? 'text'}
+                  onChange={e => updateFormField(field.id, { type: e.target.value })}
+                  className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                >
+                  <option value="text">Text</option>
+                  <option value="email">Email</option>
+                </select>
+              </div>
+              <label className="flex items-center gap-2 text-xs font-medium text-gray-500 pb-2">
+                <input
+                  type="checkbox"
+                  checked={field.required}
+                  onChange={e => updateFormField(field.id, { required: e.target.checked })}
+                  className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                Required
+              </label>
+              <button
+                type="button"
+                onClick={() => removeFormField(field.id)}
+                className="text-red-400 hover:text-red-600 text-xs font-medium pb-2 text-left"
+                disabled={formFields.length === 1 && idx === 0}
+              >
+                Delete
+              </button>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -600,14 +820,23 @@ function EventDetail({ initialEvent, onBack }) {
             </button>
           </div>
         )}
-
-        {error && <p className="text-red-500 text-sm">{error}</p>}
       </div>
 
       {/* Slots section */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-        <h2 className="text-sm font-semibold text-gray-700 mb-4">Slots</h2>
-        <SlotManager eventId={event.id} reviewers={slotManagerReviewers} />
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex flex-col gap-5">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-700">Slots</h2>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Define each reviewer’s punctual or recurring availability.
+          </p>
+        </div>
+
+        <SlotManager
+          eventId={event.id}
+          reviewers={slotManagerReviewers}
+          duration={eventDuration}
+          breakTime={eventBreakTime}
+        />
       </div>
 
       {/* Shareable link */}

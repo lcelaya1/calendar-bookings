@@ -8,6 +8,12 @@ import SlotPicker from '../components/leinner/SlotPicker'
 import BookingForm from '../components/leinner/BookingForm'
 import Confirmation from '../components/leinner/Confirmation'
 
+const DEFAULT_CALENDAR_TITLE_TEMPLATE = '[ONLINE] {reviewer_first_name} - {event_name} ({leinner_name})'
+
+function renderCalendarTitle(template, values) {
+  return (template || DEFAULT_CALENDAR_TITLE_TEMPLATE).replace(/\{(\w+)\}/g, (_, key) => values[key] ?? '')
+}
+
 export default function BookingPage() {
   const { eventId } = useParams()
 
@@ -66,15 +72,22 @@ export default function BookingPage() {
         .eq('id', booking.reviewerId)
         .single()
 
-      const reviewerFirstName = reviewer.name.split(' ')[0].toUpperCase()
-      const eventTitle = `[ONLINE] ${reviewerFirstName} - CANDIDATURA SUP (${booking.name})`
+      const reviewerFirstName = reviewer.name.split(' ')[0]
+      const eventTitle = renderCalendarTitle(event?.calendar_title_template, {
+        event_name: event?.name ?? '',
+        reviewer_name: reviewer.name,
+        reviewer_first_name: reviewerFirstName.toUpperCase(),
+        leinner_name: booking.name,
+        leinner_email: booking.email,
+        project: booking.project,
+      })
 
       const calEvent = await createCalendarEvent({
         title: eventTitle,
         description: event?.event_desc || '',
         date: booking.slot.date,
         time: booking.slot.time,
-        durationMinutes: booking.slot.duration_minutes,
+        durationMinutes: booking.slot.duration_minutes ?? event?.duration_minutes ?? 45,
         reviewerEmail: reviewer.email,
         leinnerEmail: booking.email,
         leinnerName: `${booking.name} — ${booking.project}`,
@@ -140,6 +153,7 @@ export default function BookingPage() {
           <SlotPicker
             reviewerId={selectedReviewer?.id ?? null}
             eventId={eventId}
+            minNoticeHours={event.min_notice_hours ?? 4}
             onSelect={slot => { setSelectedSlot(slot); setStep('form') }}
             onBack={event.assignment_method === 'language' ? () => setStep('language') : null}
           />
@@ -149,6 +163,7 @@ export default function BookingPage() {
             slot={selectedSlot}
             reviewerId={selectedReviewer?.id ?? null}
             eventId={eventId}
+            formFields={event.form_fields}
             onBack={() => setStep('pick')}
             onConfirmed={handleConfirmed}
           />

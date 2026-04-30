@@ -1,37 +1,17 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 
-function fmtDate(dateStr) {
-  const d = new Date(dateStr + 'T00:00:00')
-  return d.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
-}
+// ── Constants ──────────────────────────────────────────────────────────────────
 
-function fmtTime(timeStr) {
-  const [h, m] = timeStr.split(':')
-  return `${h}:${m}`
-}
-
-function generateSlots(startTime, endTime, durationMin, breakMin) {
-  const slots = []
-  const [sh, sm] = startTime.split(':').map(Number)
-  const [eh, em] = endTime.split(':').map(Number)
-  let current = sh * 60 + sm
-  const end = eh * 60 + em
-  const step = durationMin + breakMin
-
-  while (current + durationMin <= end) {
-    const h = String(Math.floor(current / 60)).padStart(2, '0')
-    const m = String(current % 60).padStart(2, '0')
-    slots.push(`${h}:${m}`)
-    current += step
-  }
-  return slots
-}
-
-function toMinutes(t) {
-  const [h, m] = t.split(':').map(Number)
-  return h * 60 + m
-}
+const DAYS = [
+  { key: 0, label: 'Domingo',    initial: 'D' },
+  { key: 1, label: 'Lunes',      initial: 'L' },
+  { key: 2, label: 'Martes',     initial: 'M' },
+  { key: 3, label: 'Miércoles',  initial: 'M' },
+  { key: 4, label: 'Jueves',     initial: 'J' },
+  { key: 5, label: 'Viernes',    initial: 'V' },
+  { key: 6, label: 'Sábado',     initial: 'S' },
+]
 
 const TIME_OPTIONS = Array.from({ length: 48 }, (_, i) => {
   const h = String(Math.floor(i / 2)).padStart(2, '0')
@@ -39,244 +19,595 @@ const TIME_OPTIONS = Array.from({ length: 48 }, (_, i) => {
   return `${h}:${m}`
 })
 
-// reviewers: array of reviewer objects { id, name, email }
-// eventId: string UUID of the event
-export default function SlotManager({ eventId, reviewers = [] }) {
-  const [slots, setSlots] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-  const [preview, setPreview] = useState([])
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
-  const [reviewerId, setReviewerId] = useState('')
-  const [date, setDate] = useState('')
-  const [startTime, setStartTime] = useState('')
-  const [endTime, setEndTime] = useState('')
-  const [duration, setDuration] = useState(30)
-  const [breakTime, setBreakTime] = useState(10)
+function generateSlots(start, end, durationMin, breakMin) {
+  const slots = []
+  const [sh, sm] = start.split(':').map(Number)
+  const [eh, em] = end.split(':').map(Number)
+  let cur = sh * 60 + sm
+  const endMin = eh * 60 + em
+  const step = durationMin + breakMin
+  while (cur + durationMin <= endMin) {
+    const h = String(Math.floor(cur / 60)).padStart(2, '0')
+    const m = String(cur % 60).padStart(2, '0')
+    slots.push(`${h}:${m}`)
+    cur += step
+  }
+  return slots
+}
 
-  // Set default reviewer when reviewers prop changes
+function getDatesInRange(from, to, dayOfWeek) {
+  const dates = []
+  const cur = new Date(from + 'T00:00:00')
+  const end = new Date(to + 'T00:00:00')
+  while (cur <= end) {
+    if (cur.getDay() === dayOfWeek) dates.push(cur.toISOString().slice(0, 10))
+    cur.setDate(cur.getDate() + 1)
+  }
+  return dates
+}
+
+function fmtDate(dateStr) {
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('es-ES', {
+    weekday: 'short', day: 'numeric', month: 'short',
+  })
+}
+
+function todayDate() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function initWeeklySchedule() {
+  const s = {}
+  DAYS.forEach(({ key }) => {
+    s[key] = [1, 2, 3, 4, 5].includes(key)
+      ? [{ start: '09:00', end: '17:00' }]
+      : null
+  })
+  return s
+}
+
+function initOnceEntries() {
+  return [{ date: todayDate(), start: '09:00', end: '17:00' }]
+}
+
+function slotKey({ reviewer_id, event_id, date, time }) {
+  return `${reviewer_id}:${event_id ?? 'default'}:${date}:${time}`
+}
+
+function dedupeSlotRows(rows) {
+  return Array.from(
+    rows.reduce((map, row) => map.set(slotKey(row), row), new Map()).values()
+  )
+}
+
+function createSlotRow(reviewerId, eventId, date, time, duration) {
+  return {
+    reviewer_id: reviewerId,
+    date,
+    time,
+    duration_minutes: duration,
+    ...(eventId ? { event_id: eventId } : {}),
+  }
+}
+
+function buildWeeklyRows(schedule, dateFrom, dateTo, duration, breakTime, reviewerId, eventId) {
+  if (!dateFrom || !dateTo || dateFrom > dateTo) return []
+
+  const rows = []
+  DAYS.forEach(({ key }) => {
+    const ranges = schedule[key]
+    if (!ranges) return
+    getDatesInRange(dateFrom, dateTo, key).forEach(date => {
+      ranges.forEach(({ start, end }) => {
+        if (start && end && start < end) {
+          generateSlots(start, end, duration, breakTime).forEach(time => {
+            rows.push(createSlotRow(reviewerId, eventId, date, time, duration))
+          })
+        }
+      })
+    })
+  })
+  return dedupeSlotRows(rows)
+}
+
+function buildOnceRows(entries, duration, breakTime, reviewerId, eventId) {
+  const rows = []
+  entries.forEach(({ date, start, end }) => {
+    if (!date || !start || !end || start >= end) return
+    generateSlots(start, end, duration, breakTime).forEach(time => {
+      rows.push(createSlotRow(reviewerId, eventId, date, time, duration))
+    })
+  })
+  return dedupeSlotRows(rows)
+}
+
+// ── ModeDropdown ───────────────────────────────────────────────────────────────
+
+function ModeDropdown({ value, onChange }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
   useEffect(() => {
-    if (reviewers.length > 0 && !reviewerId) {
-      setReviewerId(reviewers[0].id)
-    }
-  }, [reviewers])
+    function handler(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
-  useEffect(() => { load() }, [eventId])
-
-  useEffect(() => {
-    if (date && startTime && endTime && toMinutes(startTime) < toMinutes(endTime)) {
-      setPreview(generateSlots(startTime, endTime, Number(duration), Number(breakTime)))
-    } else {
-      setPreview([])
-    }
-  }, [date, startTime, endTime, duration, breakTime])
-
-  async function load() {
-    setLoading(true)
-    let query = supabase
-      .from('slots')
-      .select('*, reviewers(name)')
-      .order('date')
-      .order('time')
-
-    if (eventId) query = query.eq('event_id', eventId)
-
-    const { data: slts } = await query
-    setSlots(slts ?? [])
-    setLoading(false)
-  }
-
-  async function addSlots(e) {
-    e.preventDefault()
-    setError('')
-    if (preview.length === 0) { setError('No slots to generate — check your times.'); return }
-    setSaving(true)
-
-    const rows = preview.map(t => ({
-      reviewer_id: reviewerId,
-      date,
-      time: t,
-      duration_minutes: Number(duration),
-      ...(eventId ? { event_id: eventId } : {}),
-    }))
-
-    const { error: err } = await supabase.from('slots').upsert(rows, { onConflict: 'reviewer_id,date,time', ignoreDuplicates: true })
-    setSaving(false)
-    if (err) { setError(err.message); return }
-
-    setDate('')
-    setStartTime('')
-    setEndTime('')
-    load()
-  }
-
-  async function removeSlot(slot) {
-    if (slot.booked) { setError('Cannot remove a booked slot.'); return }
-    setError('')
-    const { error: bookingErr } = await supabase.from('bookings').delete().eq('slot_id', slot.id)
-    if (bookingErr) { setError(`Failed to remove slot: ${bookingErr.message}`); return }
-    const { error: slotErr } = await supabase.from('slots').delete().eq('id', slot.id)
-    if (slotErr) { setError(`Failed to remove slot: ${slotErr.message}`); return }
-    load()
-  }
-
-  if (loading) return <p className="text-sm text-gray-400">Loading…</p>
-  if (reviewers.length === 0)
-    return <p className="text-sm text-gray-400">Add reviewers to this event first before creating slots.</p>
-
-  const grouped = reviewers.map(r => ({
-    reviewer: r,
-    slots: slots.filter(s => s.reviewer_id === r.id),
-  }))
-
-  const durationOptions = [15, 20, 30, 45, 60, 90]
-  const breakOptions = [0, 5, 10, 15, 20, 30]
+  const options = [
+    { value: 'once',   label: 'Puntual: no se repite' },
+    { value: 'weekly', label: 'Recurrente semanal' },
+  ]
+  const current = options.find(o => o.value === value)
 
   return (
-    <div className="flex flex-col gap-8">
-      {/* Generator form */}
-      <form onSubmit={addSlots} className="flex flex-col gap-4">
-        <h3 className="text-sm font-semibold text-gray-700">Generate slots</h3>
-
-        <div className="flex flex-col gap-3">
-          {/* Row 1: Reviewer full width */}
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-gray-500">Reviewer</label>
-            <select
-              value={reviewerId}
-              onChange={e => setReviewerId(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+    <div ref={ref} className="relative self-start">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-lg px-4 py-2 transition-colors border border-gray-200"
+      >
+        {current.label}
+        <svg className={`w-4 h-4 text-gray-500 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-10 overflow-hidden min-w-[200px]">
+          {options.map(opt => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => { onChange(opt.value); setOpen(false) }}
+              className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
+                opt.value === value
+                  ? 'bg-indigo-50 text-indigo-700 font-medium'
+                  : 'text-gray-700 hover:bg-gray-50'
+              }`}
             >
-              {reviewers.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-            </select>
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── TimeSelect ─────────────────────────────────────────────────────────────────
+
+function TimeSelect({ value, onChange }) {
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+    >
+      {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+    </select>
+  )
+}
+
+// ── DayRow (weekly mode) ───────────────────────────────────────────────────────
+
+function DayRow({ day, ranges, onToggle, onAddRange, onRemoveRange, onUpdateRange }) {
+  const isActive = ranges !== null
+
+  return (
+    <div className="flex items-start gap-3 min-h-[36px] py-0.5">
+      <button
+        type="button"
+        onClick={() => onToggle(day.key)}
+        className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-colors ${
+          isActive ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+        }`}
+      >
+        {day.initial}
+      </button>
+
+      <span className={`w-24 shrink-0 text-sm pt-1.5 ${isActive ? 'text-gray-700 font-medium' : 'text-gray-400'}`}>
+        {day.label}
+      </span>
+
+      <div className="flex-1 flex flex-col gap-1.5">
+        {!isActive ? (
+          <div className="flex items-center gap-3 pt-1">
+            <span className="text-sm text-gray-400">No disponible</span>
+            <button
+              type="button"
+              onClick={() => onToggle(day.key)}
+              className="w-6 h-6 rounded-full border border-gray-300 flex items-center justify-center text-gray-400 hover:border-indigo-400 hover:text-indigo-600 transition-colors leading-none"
+            >
+              +
+            </button>
           </div>
+        ) : (
+          <>
+            {ranges.map((range, idx) => (
+              <div key={idx} className="flex items-center gap-2">
+                <TimeSelect value={range.start} onChange={v => onUpdateRange(day.key, idx, 'start', v)} />
+                <span className="text-gray-400 text-sm select-none">–</span>
+                <TimeSelect value={range.end} onChange={v => onUpdateRange(day.key, idx, 'end', v)} />
+                <button
+                  type="button"
+                  onClick={() => onRemoveRange(day.key, idx)}
+                  className="text-gray-300 hover:text-red-400 transition-colors text-xs px-1"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => onAddRange(day.key)}
+              className="self-start text-xs text-indigo-500 hover:text-indigo-700 transition-colors mt-0.5"
+            >
+              + Añadir franja
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
 
-          {/* Row 2: Date, Start time, End time */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-gray-500">Date</label>
-              <input
-                required type="date" value={date}
-                onChange={e => setDate(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-              />
-            </div>
+// ── OnceDateRow (once mode) ────────────────────────────────────────────────────
 
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-gray-500">Start time</label>
-              <select
-                required value={startTime}
-                onChange={e => setStartTime(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-              >
-                <option value="">--:--</option>
-                {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
+function OnceDateRow({ entry, onUpdate, onDuplicate, onRemove }) {
+  return (
+    <div className="flex items-center gap-3 flex-wrap rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+      <input
+        type="date"
+        value={entry.date}
+        min={todayDate()}
+        onChange={e => onUpdate('date', e.target.value)}
+        className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+      />
+      <TimeSelect value={entry.start} onChange={v => onUpdate('start', v)} />
+      <span className="text-gray-400 text-sm select-none">–</span>
+      <TimeSelect value={entry.end} onChange={v => onUpdate('end', v)} />
 
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-gray-500">End time</label>
-              <select
-                required value={endTime}
-                onChange={e => setEndTime(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-              >
-                <option value="">--:--</option>
-                {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-          </div>
+      {/* ⊕ clone this row (same date) */}
+      <button
+        type="button"
+        onClick={onDuplicate}
+        title="Añadir otra franja en este día"
+        className="w-7 h-7 rounded-full border border-gray-300 flex items-center justify-center text-gray-400 hover:border-indigo-400 hover:text-indigo-600 transition-colors"
+      >
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+        </svg>
+      </button>
 
-          {/* Row 3: Slot duration + Break */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-gray-500">Slot duration</label>
-              <select
-                value={duration}
-                onChange={e => setDuration(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-              >
-                {durationOptions.map(m => (
-                  <option key={m} value={m}>{m < 60 ? `${m} min` : `${m / 60}h`}</option>
-                ))}
-              </select>
-            </div>
+      {/* ✕ remove row */}
+      <button
+        type="button"
+        onClick={onRemove}
+        title="Eliminar"
+        className="w-7 h-7 rounded-full border border-gray-200 flex items-center justify-center text-gray-300 hover:border-red-300 hover:text-red-400 transition-colors"
+      >
+        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  )
+}
 
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-gray-500">Break between slots</label>
-              <select
-                value={breakTime}
-                onChange={e => setBreakTime(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-              >
-                {breakOptions.map(m => (
-                  <option key={m} value={m}>{m === 0 ? 'No break' : `${m} min`}</option>
-                ))}
-              </select>
-            </div>
-          </div>
+// ── ReviewerSchedule ───────────────────────────────────────────────────────────
+
+function ReviewerSchedule({ reviewer, eventId, duration, breakTime, onSlotsCreated }) {
+  const [mode, setMode]           = useState('weekly')
+  const [loadingAvailability, setLoadingAvailability] = useState(true)
+
+  // Weekly mode state
+  const [schedule, setSchedule]   = useState(initWeeklySchedule)
+  const [dateFrom, setDateFrom]   = useState('')
+  const [dateTo, setDateTo]       = useState('')
+
+  // Once mode state
+  const [entries, setEntries]     = useState(initOnceEntries)
+
+  const [saving, setSaving]       = useState(false)
+  const [error, setError]         = useState('')
+
+  const rows = mode === 'weekly'
+    ? buildWeeklyRows(schedule, dateFrom, dateTo, duration, breakTime, reviewer.id, eventId)
+    : buildOnceRows(entries, duration, breakTime, reviewer.id, eventId)
+  const preview = rows.length
+
+  useEffect(() => {
+    let ignore = false
+
+    async function loadAvailability() {
+      setLoadingAvailability(true)
+      const { data, error: err } = await supabase
+        .from('event_reviewer_availability')
+        .select('mode, date_from, date_to, weekly_schedule, once_entries')
+        .eq('event_id', eventId)
+        .eq('reviewer_id', reviewer.id)
+        .maybeSingle()
+
+      if (ignore) return
+      if (err) {
+        setError(err.message)
+        setLoadingAvailability(false)
+        return
+      }
+
+      if (data) {
+        setMode(data.mode === 'once' ? 'once' : 'weekly')
+        setDateFrom(data.date_from ?? '')
+        setDateTo(data.date_to ?? '')
+        setSchedule(data.weekly_schedule ?? initWeeklySchedule())
+        setEntries(Array.isArray(data.once_entries) && data.once_entries.length > 0 ? data.once_entries : initOnceEntries())
+      }
+
+      setLoadingAvailability(false)
+    }
+
+    loadAvailability()
+    return () => { ignore = true }
+  }, [eventId, reviewer.id])
+
+  // ── Weekly helpers ──
+  function toggleDay(key) {
+    setSchedule(prev => ({
+      ...prev,
+      [key]: prev[key] === null ? [{ start: '09:00', end: '17:00' }] : null,
+    }))
+  }
+  function addWeeklyRange(key) {
+    setSchedule(prev => ({ ...prev, [key]: [...(prev[key] ?? []), { start: '09:00', end: '17:00' }] }))
+  }
+  function removeWeeklyRange(key, idx) {
+    setSchedule(prev => {
+      const updated = prev[key].filter((_, i) => i !== idx)
+      return { ...prev, [key]: updated.length === 0 ? null : updated }
+    })
+  }
+  function updateWeeklyRange(key, idx, field, value) {
+    setSchedule(prev => ({
+      ...prev,
+      [key]: prev[key].map((r, i) => i === idx ? { ...r, [field]: value } : r),
+    }))
+  }
+
+  // ── Once helpers ──
+  function updateEntry(idx, field, value) {
+    setEntries(prev => prev.map((e, i) => i === idx ? { ...e, [field]: value } : e))
+  }
+  function duplicateEntry(idx) {
+    setEntries(prev => [
+      ...prev.slice(0, idx + 1),
+      { ...prev[idx] },
+      ...prev.slice(idx + 1),
+    ])
+  }
+  function removeEntry(idx) {
+    setEntries(prev => prev.length === 1 ? initOnceEntries() : prev.filter((_, i) => i !== idx))
+  }
+  function addEntry() {
+    setEntries(prev => [...prev, { date: todayDate(), start: '09:00', end: '17:00' }])
+  }
+
+  // ── Save detected slots ──
+  async function saveDetectedSlots() {
+    setError('')
+
+    if (mode === 'weekly') {
+      if (!dateFrom || !dateTo)   { setError('Selecciona un rango de fechas.'); return }
+      if (dateFrom > dateTo)      { setError('La fecha de inicio debe ser anterior a la fecha de fin.'); return }
+    }
+
+    if (rows.length === 0) { setError('No hay slots detectados con la configuración actual.'); return }
+
+    setSaving(true)
+    const availabilityRow = {
+      event_id: eventId,
+      reviewer_id: reviewer.id,
+      mode,
+      date_from: mode === 'weekly' ? dateFrom : null,
+      date_to: mode === 'weekly' ? dateTo : null,
+      weekly_schedule: schedule,
+      once_entries: entries,
+      updated_at: new Date().toISOString(),
+    }
+
+    const { error: availabilityErr } = await supabase
+      .from('event_reviewer_availability')
+      .upsert(availabilityRow, { onConflict: 'event_id,reviewer_id' })
+
+    if (availabilityErr) {
+      setSaving(false)
+      setError(availabilityErr.message)
+      return
+    }
+
+    let deleteQuery = supabase
+      .from('slots')
+      .delete()
+      .eq('reviewer_id', reviewer.id)
+      .eq('booked', false)
+
+    deleteQuery = eventId
+      ? deleteQuery.eq('event_id', eventId)
+      : deleteQuery.is('event_id', null)
+
+    const { error: deleteErr } = await deleteQuery
+
+    if (deleteErr) {
+      setSaving(false)
+      setError(deleteErr.message)
+      return
+    }
+
+    const { error: err } = await supabase
+      .from('slots')
+      .upsert(rows, { onConflict: 'reviewer_id,date,time' })
+    setSaving(false)
+    if (err) { setError(err.message); return }
+    onSlotsCreated()
+  }
+
+  return (
+    <div className="border border-gray-200 rounded-xl overflow-hidden">
+
+      {/* Header */}
+      <div className="bg-gray-50 px-5 py-3 border-b border-gray-200">
+        <p className="text-sm font-semibold text-gray-800">{reviewer.name}</p>
+        <p className="text-xs text-gray-400">{reviewer.email}</p>
+      </div>
+
+      <div className="px-5 py-5 flex flex-col gap-5">
+        {loadingAvailability && (
+          <p className="text-sm text-gray-400">Cargando disponibilidad guardada…</p>
+        )}
+
+        {/* Mode switcher */}
+        <div className="flex flex-col gap-2">
+          <ModeDropdown value={mode} onChange={v => { setMode(v); setError('') }} />
+          <p className="text-xs text-gray-400">
+            {mode === 'once'
+              ? 'Crea disponibilidad para fechas concretas, sin repetirse en otras semanas.'
+              : 'Crea disponibilidad que se repite cada semana dentro del rango de fechas.'}
+          </p>
         </div>
 
-        {/* Live preview */}
-        {preview.length > 0 && (
-          <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3">
-            <p className="text-xs font-semibold text-indigo-500 uppercase tracking-wide mb-2">
-              {preview.length} slot{preview.length !== 1 ? 's' : ''} will be created
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {preview.map(t => (
-                <span key={t} className="bg-white border border-indigo-200 text-indigo-700 text-xs font-medium rounded-lg px-2.5 py-1">
-                  {fmtTime(t)}
-                </span>
+        {/* ── ONCE MODE ── */}
+        {mode === 'once' && (
+          <div className="flex flex-col gap-2">
+            {entries.map((entry, idx) => (
+              <OnceDateRow
+                key={idx}
+                entry={entry}
+                onUpdate={(field, value) => updateEntry(idx, field, value)}
+                onDuplicate={() => duplicateEntry(idx)}
+                onRemove={() => removeEntry(idx)}
+              />
+            ))}
+            <button
+              type="button"
+              onClick={addEntry}
+              className="self-start text-xs text-indigo-500 hover:text-indigo-700 transition-colors mt-1"
+            >
+              + Añadir fecha
+            </button>
+          </div>
+        )}
+
+        {/* ── WEEKLY MODE ── */}
+        {mode === 'weekly' && (
+          <>
+            <div className="flex flex-col gap-2">
+              {DAYS.map(day => (
+                <DayRow
+                  key={day.key}
+                  day={day}
+                  ranges={schedule[day.key]}
+                  onToggle={toggleDay}
+                  onAddRange={addWeeklyRange}
+                  onRemoveRange={removeWeeklyRange}
+                  onUpdateRange={updateWeeklyRange}
+                />
               ))}
             </div>
-          </div>
+
+            <div className="border-t border-gray-100" />
+
+            {/* Date range */}
+            <div className="flex items-end gap-4 flex-wrap">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-gray-500">Aplicar desde</label>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={e => setDateFrom(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-gray-500">Hasta</label>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={e => setDateTo(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+              </div>
+            </div>
+          </>
         )}
 
         {error && <p className="text-red-500 text-sm">{error}</p>}
 
-        <div>
+        {/* Generate button */}
+        <div className="flex items-center gap-3 flex-wrap">
           <button
-            type="submit"
-            disabled={saving || preview.length === 0}
-            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-sm font-medium rounded-lg px-5 py-2 transition-colors"
+            type="button"
+            onClick={saveDetectedSlots}
+            disabled={saving || preview === 0}
+            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-sm font-semibold rounded-lg px-5 py-2 transition-colors"
           >
-            {saving ? 'Creating…' : `Create ${preview.length > 0 ? preview.length : ''} slot${preview.length !== 1 ? 's' : ''}`}
+            {saving
+              ? 'Guardando…'
+              : preview > 0
+                ? `Guardar ${preview} slot${preview !== 1 ? 's' : ''}`
+                : 'Guardar slots'}
           </button>
+          {mode === 'weekly' && preview > 0 && dateFrom && dateTo && (
+            <span className="text-xs text-gray-400">
+              del {fmtDate(dateFrom)} al {fmtDate(dateTo)}
+            </span>
+          )}
         </div>
-      </form>
-
-      {/* Slots by reviewer */}
-      <div className="flex flex-col gap-6 border-t border-gray-100 pt-6">
-        <h3 className="text-sm font-semibold text-gray-700">All slots</h3>
-        {grouped.every(g => g.slots.length === 0) ? (
-          <p className="text-sm text-gray-400">No slots yet.</p>
-        ) : grouped.map(({ reviewer, slots: rSlots }) => rSlots.length === 0 ? null : (
-          <div key={reviewer.id}>
-            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{reviewer.name}</h4>
-            <div className="flex flex-col gap-1">
-              {rSlots.map(s => (
-                <div key={s.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm text-gray-700 font-medium">{fmtDate(s.date)}</span>
-                    <span className="text-sm text-gray-500">{fmtTime(s.time)}</span>
-                    <span className="text-xs text-gray-400">{s.duration_minutes} min</span>
-                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${s.booked ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                      {s.booked ? 'Booked' : 'Available'}
-                    </span>
-                  </div>
-                  {!s.booked && (
-                    <button onClick={() => removeSlot(s)} className="text-red-400 hover:text-red-600 text-xs transition-colors">
-                      Remove
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
       </div>
+
+    </div>
+  )
+}
+
+// ── SlotManager (root) ─────────────────────────────────────────────────────────
+
+export default function SlotManager({ eventId, reviewers = [], duration = 30, breakTime = 10 }) {
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => { load() }, [eventId])
+
+  async function load() {
+    setLoading(true)
+    setLoading(false)
+  }
+
+  if (loading) return <p className="text-sm text-gray-400">Cargando…</p>
+
+  if (reviewers.length === 0)
+    return (
+      <p className="text-sm text-gray-400">
+        Añade revisores a este evento antes de configurar la disponibilidad.
+      </p>
+    )
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <h3 className="text-sm font-semibold text-gray-700">Disponibilidad</h3>
+        <p className="text-xs text-gray-400 mt-0.5">
+          Define el horario de cada revisor para generar los slots de reserva.
+        </p>
+      </div>
+
+      {reviewers.map(reviewer => (
+        <ReviewerSchedule
+          key={reviewer.id}
+          reviewer={reviewer}
+          eventId={eventId}
+          duration={duration}
+          breakTime={breakTime}
+          onSlotsCreated={load}
+        />
+      ))}
     </div>
   )
 }

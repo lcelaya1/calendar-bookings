@@ -15,6 +15,7 @@ function Layout() {
       <Routes>
         <Route path="/" element={<EventsPage />} />
         <Route path="/book/:eventId" element={<BookingPage />} />
+        <Route path="/book/:slug/:eventId" element={<BookingPage />} />
         <Route
           path="/admin"
           element={

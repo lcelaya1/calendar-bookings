@@ -6,9 +6,15 @@ const MONTHS = ['January','February','March','April','May','June','July','August
 
 function fmtTime(timeStr) {
   const [h, m] = timeStr.split(':').map(Number)
-  const ampm = h >= 12 ? 'pm' : 'am'
-  const h12 = h % 12 || 12
-  return `${h12}:${String(m).padStart(2, '0')}${ampm}`
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+function madridNow() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Madrid' }))
+}
+
+function slotDateTime(date, time) {
+  return new Date(`${date}T${time}`)
 }
 
 function startOfMonth(year, month) {
@@ -24,10 +30,10 @@ function dayOfWeek(date) {
   return (date.getDay() + 6) % 7
 }
 
-export default function SlotPicker({ onSelect, onBack, reviewerId, eventId }) {
+export default function SlotPicker({ onSelect, onBack, reviewerId, eventId, minNoticeHours = 4 }) {
   const [slotsByDate, setSlotsByDate] = useState({})
   const [loading, setLoading] = useState(true)
-  const [today] = useState(() => new Date())
+  const [today] = useState(() => madridNow())
   const [viewYear, setViewYear] = useState(today.getFullYear())
   const [viewMonth, setViewMonth] = useState(today.getMonth())
   const [selectedDate, setSelectedDate] = useState(null)
@@ -47,8 +53,12 @@ export default function SlotPicker({ onSelect, onBack, reviewerId, eventId }) {
 
       const { data } = await query
 
+      const earliestBookable = madridNow()
+      earliestBookable.setHours(earliestBookable.getHours() + minNoticeHours)
+
       const map = {}
       for (const s of data ?? []) {
+        if (slotDateTime(s.date, s.time) < earliestBookable) continue
         if (!map[s.date]) map[s.date] = []
         // In round-robin mode deduplicate by time; in language mode all slots belong to one reviewer
         if (!map[s.date].find(x => x.time === s.time)) {
@@ -59,7 +69,7 @@ export default function SlotPicker({ onSelect, onBack, reviewerId, eventId }) {
       setLoading(false)
     }
     load()
-  }, [reviewerId, eventId])
+  }, [reviewerId, eventId, minNoticeHours])
 
   function prevMonth() {
     if (viewMonth === 0) { setViewYear(y => y - 1); setViewMonth(11) }
@@ -104,7 +114,8 @@ export default function SlotPicker({ onSelect, onBack, reviewerId, eventId }) {
   const firstDay = startOfMonth(viewYear, viewMonth)
   const offset = dayOfWeek(firstDay)
   const totalDays = daysInMonth(viewYear, viewMonth)
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`
+  const madridToday = madridNow()
+  const todayStr = `${madridToday.getFullYear()}-${String(madridToday.getMonth()+1).padStart(2,'0')}-${String(madridToday.getDate()).padStart(2,'0')}`
 
   const cells = []
   for (let i = 0; i < offset; i++) cells.push(null)

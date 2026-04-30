@@ -2,6 +2,20 @@ import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 
+function eventSlug(name) {
+  const slug = (name ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return slug || 'event'
+}
+
+function eventBookingPath(event) {
+  return `/book/${eventSlug(event.name)}/${event.id}`
+}
+
 export default function EventsPage() {
   const [events, setEvents] = useState(null)
   const navigate = useNavigate()
@@ -16,7 +30,7 @@ export default function EventsPage() {
       const openEvents = data ?? []
 
       if (openEvents.length === 1) {
-        navigate(`/book/${openEvents[0].id}`, { replace: true })
+        navigate(eventBookingPath(openEvents[0]), { replace: true })
         return
       }
 
@@ -68,7 +82,7 @@ export default function EventsPage() {
                 </div>
               </div>
               <Link
-                to={`/book/${event.id}`}
+                to={eventBookingPath(event)}
                 className="shrink-0 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors"
               >
                 Book now
