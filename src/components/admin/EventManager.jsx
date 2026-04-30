@@ -522,14 +522,15 @@ function EventDetail({ initialEvent, onBack }) {
           />
         </div>
 
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-500">
-            Assignment method {savingField === 'assignment_method' && <span className="text-indigo-400">saving…</span>}
-          </label>
-          <MethodToggle
-            value={event.assignment_method}
-            onChange={val => updateFieldNow('assignment_method', val)}
-          />
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-gray-500">Assignment method:</span>
+          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
+            event.assignment_method === 'language'
+              ? 'bg-purple-50 text-purple-700'
+              : 'bg-blue-50 text-blue-700'
+          }`}>
+            {event.assignment_method === 'language' ? '🌐 Language-based' : '⟳ Round Robin'}
+          </span>
         </div>
       </div>
 
