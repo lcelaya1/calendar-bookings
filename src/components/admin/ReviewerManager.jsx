@@ -9,6 +9,9 @@ export default function ReviewerManager() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [editingId, setEditingId] = useState(null)
+  const [editName, setEditName] = useState('')
+  const [editEmail, setEditEmail] = useState('')
 
   useEffect(() => { load() }, [])
 
@@ -39,6 +42,32 @@ export default function ReviewerManager() {
     }
     setName('')
     setEmail('')
+    load()
+  }
+
+  function startEdit(r) {
+    setEditingId(r.id)
+    setEditName(r.name)
+    setEditEmail(r.email)
+    setError('')
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setError('')
+  }
+
+  async function saveEdit(id) {
+    setError('')
+    const { error: err } = await supabase
+      .from('reviewers')
+      .update({ name: editName.trim(), email: editEmail.trim().toLowerCase() })
+      .eq('id', id)
+    if (err) {
+      setError(err.message.includes('unique') ? 'That email is already registered.' : err.message)
+      return
+    }
+    setEditingId(null)
     load()
   }
 
@@ -98,21 +127,72 @@ export default function ReviewerManager() {
           <tbody>
             {reviewers.map(r => (
               <tr key={r.id} className="border-b border-gray-50 last:border-0">
-                <td className="py-3 text-gray-800 font-medium">{r.name}</td>
-                <td className="py-3 text-gray-500">{r.email}</td>
-                <td className="py-3 text-center">
-                  <span className="inline-block bg-indigo-50 text-indigo-700 text-xs font-semibold rounded-full px-2 py-0.5">
-                    {bookingCounts[r.id] ?? 0}
-                  </span>
-                </td>
-                <td className="py-3 text-right">
-                  <button
-                    onClick={() => removeReviewer(r)}
-                    className="text-red-400 hover:text-red-600 text-xs transition-colors"
-                  >
-                    Remove
-                  </button>
-                </td>
+                {editingId === r.id ? (
+                  <>
+                    <td className="py-2 pr-2">
+                      <input
+                        value={editName}
+                        onChange={e => setEditName(e.target.value)}
+                        className="border border-gray-300 rounded-lg px-2 py-1 text-sm w-full focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                      />
+                    </td>
+                    <td className="py-2 pr-2">
+                      <input
+                        type="email"
+                        value={editEmail}
+                        onChange={e => setEditEmail(e.target.value)}
+                        className="border border-gray-300 rounded-lg px-2 py-1 text-sm w-full focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                      />
+                    </td>
+                    <td className="py-2 text-center">
+                      <span className="inline-block bg-indigo-50 text-indigo-700 text-xs font-semibold rounded-full px-2 py-0.5">
+                        {bookingCounts[r.id] ?? 0}
+                      </span>
+                    </td>
+                    <td className="py-2 text-right">
+                      <div className="flex items-center justify-end gap-3">
+                        <button
+                          onClick={() => saveEdit(r.id)}
+                          className="text-indigo-600 hover:text-indigo-800 text-xs font-medium transition-colors"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={cancelEdit}
+                          className="text-gray-400 hover:text-gray-600 text-xs transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td className="py-3 text-gray-800 font-medium">{r.name}</td>
+                    <td className="py-3 text-gray-500">{r.email}</td>
+                    <td className="py-3 text-center">
+                      <span className="inline-block bg-indigo-50 text-indigo-700 text-xs font-semibold rounded-full px-2 py-0.5">
+                        {bookingCounts[r.id] ?? 0}
+                      </span>
+                    </td>
+                    <td className="py-3 text-right">
+                      <div className="flex items-center justify-end gap-3">
+                        <button
+                          onClick={() => startEdit(r)}
+                          className="text-indigo-500 hover:text-indigo-700 text-xs transition-colors"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => removeReviewer(r)}
+                          className="text-red-400 hover:text-red-600 text-xs transition-colors"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>

@@ -1,5 +1,4 @@
 const CALENDAR_ID = 'c_330a8c9b4aa47122f2bc86bb327a949308448ca781fb63ecd92bfe4866c1e0c8@group.calendar.google.com'
-const SCOPES = 'https://www.googleapis.com/auth/calendar.events'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -8,49 +7,19 @@ const CORS = {
 }
 
 async function getAccessToken(): Promise<string> {
-  const sa = JSON.parse(Deno.env.get('GOOGLE_SERVICE_ACCOUNT')!)
-
-  const now = Math.floor(Date.now() / 1000)
-  const header = { alg: 'RS256', typ: 'JWT' }
-  const payload = {
-    iss: sa.client_email,
-    scope: SCOPES,
-    aud: 'https://oauth2.googleapis.com/token',
-    iat: now,
-    exp: now + 3600,
-  }
-
-  const b64url = (obj: object) =>
-    btoa(JSON.stringify(obj)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
-
-  const signingInput = `${b64url(header)}.${b64url(payload)}`
-
-  const pemContent = sa.private_key
-    .replace('-----BEGIN PRIVATE KEY-----\n', '')
-    .replace('\n-----END PRIVATE KEY-----\n', '')
-    .replace(/\n/g, '')
-
-  const keyBuffer = Uint8Array.from(atob(pemContent), c => c.charCodeAt(0))
-  const cryptoKey = await crypto.subtle.importKey(
-    'pkcs8',
-    keyBuffer,
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  )
-
-  const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', cryptoKey, new TextEncoder().encode(signingInput))
-  const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
-  const jwt = `${signingInput}.${sigB64}`
-
-  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+  const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth2:grant-type:jwt-bearer', assertion: jwt }),
+    body: new URLSearchParams({
+      client_id: Deno.env.get('GOOGLE_CLIENT_ID')!,
+      client_secret: Deno.env.get('GOOGLE_CLIENT_SECRET')!,
+      refresh_token: Deno.env.get('GOOGLE_REFRESH_TOKEN')!,
+      grant_type: 'refresh_token',
+    }),
   })
-  const tokenData = await tokenRes.json()
-  if (!tokenData.access_token) throw new Error(`Token exchange failed: ${JSON.stringify(tokenData)}`)
-  return tokenData.access_token
+  const data = await res.json()
+  if (!data.access_token) throw new Error(`Token refresh failed: ${JSON.stringify(data)}`)
+  return data.access_token
 }
 
 function json(data: unknown, status = 200) {
@@ -74,7 +43,7 @@ Deno.serve(async (req) => {
       const end = new Date(start.getTime() + durationMinutes * 60_000)
       const requestId = `prb-${Date.now()}-${Math.random().toString(36).slice(2)}`
 
-      const res = await fetch(`${calUrl}?conferenceDataVersion=1`, {
+      const res = await fetch(`${calUrl}?conferenceDataVersion=1&sendUpdates=all`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { detectCanceller } from '../../lib/google'
-import { deleteCalendarEvent, getCalendarEvent } from '../../lib/calendarApi'
+import { getCalendarEvent } from '../../lib/calendarApi'
 
 function fmt(date, time) {
   const d = new Date(`${date}T${time}`)
@@ -32,10 +32,7 @@ function exportCSV(bookings) {
 export default function BookingsList() {
   const [bookings, setBookings] = useState([])
   const [loading, setLoading] = useState(true)
-  const [cancelling, setCancelling] = useState(null)
-  const [confirmId, setConfirmId] = useState(null)
-  const [detecting, setDetecting] = useState(null)   // booking id currently being detected
-  const [detected, setDetected] = useState({})        // { [bookingId]: 'leinner' | 'reviewer' | 'admin' | null }
+  const [syncing, setSyncing] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -46,47 +43,43 @@ export default function BookingsList() {
       .select('*, reviewers(name, email)')
       .order('date')
       .order('time')
-    setBookings(data ?? [])
+    const bookings = data ?? []
+    setBookings(bookings)
     setLoading(false)
+    syncCancellations(bookings)
   }
 
-  async function handleCancelClick(booking) {
-    setDetecting(booking.id)
-    try {
-      let who = null
-      if (booking.google_event_id) {
-        const { data: config } = await supabase.from('config').select('ops_email').eq('id', 1).single()
+  async function syncCancellations(bookings) {
+    setSyncing(true)
+    const { data: config } = await supabase.from('config').select('ops_email').eq('id', 1).single()
+    const confirmed = bookings.filter(b => (b.status ?? 'confirmed') === 'confirmed' && b.google_event_id)
+
+    for (const booking of confirmed) {
+      try {
         const event = await getCalendarEvent(booking.google_event_id)
-        who = detectCanceller(event, booking.leinner_email, booking.reviewers?.email, config?.ops_email)
+        const who = detectCanceller(event, booking.leinner_email, booking.reviewers?.email, config?.ops_email)
+        if (who) {
+          await Promise.all([
+            supabase.from('bookings').update({
+              status: 'cancelled',
+              cancelled_at: new Date().toISOString(),
+              cancelled_by: who,
+            }).eq('id', booking.id),
+            supabase.from('slots').update({ booked: false }).eq('id', booking.slot_id),
+          ])
+        }
+      } catch {
+        // ignore individual errors
       }
-      setDetected(prev => ({ ...prev, [booking.id]: who }))
-    } catch {
-      setDetected(prev => ({ ...prev, [booking.id]: undefined }))
-    } finally {
-      setDetecting(null)
-      setConfirmId(booking.id)
     }
-  }
 
-  async function cancelBooking(booking, cancelledBy) {
-    setCancelling(booking.id)
-    setConfirmId(null)
-    setDetected(prev => { const n = { ...prev }; delete n[booking.id]; return n })
-
-    await Promise.all([
-      supabase.from('bookings').update({
-        status: 'cancelled',
-        cancelled_at: new Date().toISOString(),
-        cancelled_by: cancelledBy,
-      }).eq('id', booking.id),
-      supabase.from('slots').update({ booked: false }).eq('id', booking.slot_id),
-      booking.google_event_id
-        ? deleteCalendarEvent(booking.google_event_id).catch(err => console.warn('Calendar delete:', err.message))
-        : Promise.resolve(),
-    ])
-
-    setCancelling(null)
-    load()
+    const { data: fresh } = await supabase
+      .from('bookings')
+      .select('*, reviewers(name, email)')
+      .order('date')
+      .order('time')
+    setBookings(fresh ?? [])
+    setSyncing(false)
   }
 
   const confirmed = bookings.filter(b => (b.status ?? 'confirmed') === 'confirmed')
@@ -99,6 +92,7 @@ export default function BookingsList() {
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-500">
           {confirmed.length} confirmed · {cancelled.length} cancelled
+          {syncing && <span className="ml-2 text-gray-400">· Syncing…</span>}
         </p>
         {bookings.length > 0 && (
           <button
@@ -133,82 +127,7 @@ export default function BookingsList() {
                     </div>
 
                     <div className="shrink-0">
-                      {confirmId === b.id ? (
-                        <div className="flex flex-col items-end gap-1.5">
-                          {detected[b.id] != null ? (
-                            <>
-                              <span className="text-xs text-gray-500 font-medium">
-                                Detected: cancelled by{' '}
-                                <span className="font-semibold text-gray-700">
-                                  {detected[b.id] === 'leinner' ? 'LEINNer' : detected[b.id] === 'reviewer' ? 'Reviewer' : 'Admin'}
-                                </span>
-                              </span>
-                              <div className="flex gap-2">
-                                <button
-                                  onClick={() => cancelBooking(b, detected[b.id])}
-                                  disabled={cancelling === b.id}
-                                  className="text-xs font-medium bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg px-2.5 py-1 transition-colors disabled:opacity-50"
-                                >
-                                  Confirm
-                                </button>
-                                <button
-                                  onClick={() => setDetected(prev => ({ ...prev, [b.id]: undefined }))}
-                                  className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
-                                >
-                                  Override
-                                </button>
-                                <button
-                                  onClick={() => { setConfirmId(null); setDetected(prev => { const n = { ...prev }; delete n[b.id]; return n }) }}
-                                  className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
-                                >
-                                  ✕
-                                </button>
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <span className="text-xs text-gray-500 font-medium">Who cancelled?</span>
-                              <div className="flex gap-2">
-                                <button
-                                  onClick={() => cancelBooking(b, 'admin')}
-                                  disabled={cancelling === b.id}
-                                  className="text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100 rounded-lg px-2.5 py-1 transition-colors disabled:opacity-50"
-                                >
-                                  Me (admin)
-                                </button>
-                                <button
-                                  onClick={() => cancelBooking(b, 'reviewer')}
-                                  disabled={cancelling === b.id}
-                                  className="text-xs font-medium bg-yellow-50 text-yellow-600 hover:bg-yellow-100 rounded-lg px-2.5 py-1 transition-colors disabled:opacity-50"
-                                >
-                                  Reviewer
-                                </button>
-                                <button
-                                  onClick={() => cancelBooking(b, 'leinner')}
-                                  disabled={cancelling === b.id}
-                                  className="text-xs font-medium bg-orange-50 text-orange-600 hover:bg-orange-100 rounded-lg px-2.5 py-1 transition-colors disabled:opacity-50"
-                                >
-                                  LEINNer
-                                </button>
-                                <button
-                                  onClick={() => { setConfirmId(null); setDetected(prev => { const n = { ...prev }; delete n[b.id]; return n }) }}
-                                  className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
-                                >
-                                  ✕
-                                </button>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => handleCancelClick(b)}
-                          disabled={detecting === b.id}
-                          className="text-xs text-red-400 hover:text-red-600 border border-red-100 hover:border-red-300 rounded-lg px-2.5 py-1 transition-colors disabled:opacity-50"
-                        >
-                          {detecting === b.id ? 'Detecting…' : 'Cancel'}
-                        </button>
-                      )}
+                      <span className="text-xs text-green-600 font-medium">Confirmed</span>
                     </div>
                   </div>
                 ))}

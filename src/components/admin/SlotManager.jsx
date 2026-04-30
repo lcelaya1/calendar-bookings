@@ -33,6 +33,12 @@ function toMinutes(t) {
   return h * 60 + m
 }
 
+const TIME_OPTIONS = Array.from({ length: 48 }, (_, i) => {
+  const h = String(Math.floor(i / 2)).padStart(2, '0')
+  const m = i % 2 === 0 ? '00' : '30'
+  return `${h}:${m}`
+})
+
 export default function SlotManager() {
   const [reviewers, setReviewers] = useState([])
   const [slots, setSlots] = useState([])
@@ -96,7 +102,10 @@ export default function SlotManager() {
   async function removeSlot(slot) {
     if (slot.booked) { setError('Cannot remove a booked slot.'); return }
     setError('')
-    await supabase.from('slots').delete().eq('id', slot.id)
+    const { error: bookingErr } = await supabase.from('bookings').delete().eq('slot_id', slot.id)
+    if (bookingErr) { setError(`Failed to remove slot: ${bookingErr.message}`); return }
+    const { error: slotErr } = await supabase.from('slots').delete().eq('id', slot.id)
+    if (slotErr) { setError(`Failed to remove slot: ${slotErr.message}`); return }
     load()
   }
 
@@ -118,7 +127,8 @@ export default function SlotManager() {
       <form onSubmit={addSlots} className="flex flex-col gap-4">
         <h3 className="text-sm font-semibold text-gray-700">Generate slots</h3>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="flex flex-col gap-3">
+          {/* Row 1: Reviewer full width */}
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-gray-500">Reviewer</label>
             <select
@@ -130,33 +140,44 @@ export default function SlotManager() {
             </select>
           </div>
 
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-gray-500">Date</label>
-            <input
-              required type="date" value={date}
-              onChange={e => setDate(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            />
+          {/* Row 2: Date, Start time, End time */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-gray-500">Date</label>
+              <input
+                required type="date" value={date}
+                onChange={e => setDate(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-gray-500">Start time</label>
+              <select
+                required value={startTime}
+                onChange={e => setStartTime(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                <option value="">--:--</option>
+                {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-gray-500">End time</label>
+              <select
+                required value={endTime}
+                onChange={e => setEndTime(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                <option value="">--:--</option>
+                {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
           </div>
 
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-gray-500">Start time</label>
-            <input
-              required type="time" value={startTime}
-              onChange={e => setStartTime(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-gray-500">End time</label>
-            <input
-              required type="time" value={endTime}
-              onChange={e => setEndTime(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            />
-          </div>
-
+          {/* Row 3: Slot duration + Break */}
+          <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-gray-500">Slot duration</label>
             <select
@@ -181,6 +202,7 @@ export default function SlotManager() {
                 <option key={m} value={m}>{m === 0 ? 'No break' : `${m} min`}</option>
               ))}
             </select>
+          </div>
           </div>
         </div>
 
