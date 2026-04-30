@@ -39,8 +39,9 @@ const TIME_OPTIONS = Array.from({ length: 48 }, (_, i) => {
   return `${h}:${m}`
 })
 
-export default function SlotManager() {
-  const [reviewers, setReviewers] = useState([])
+// reviewers: array of reviewer objects { id, name, email }
+// eventId: string UUID of the event
+export default function SlotManager({ eventId, reviewers = [] }) {
   const [slots, setSlots] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -54,7 +55,14 @@ export default function SlotManager() {
   const [duration, setDuration] = useState(30)
   const [breakTime, setBreakTime] = useState(10)
 
-  useEffect(() => { load() }, [])
+  // Set default reviewer when reviewers prop changes
+  useEffect(() => {
+    if (reviewers.length > 0 && !reviewerId) {
+      setReviewerId(reviewers[0].id)
+    }
+  }, [reviewers])
+
+  useEffect(() => { load() }, [eventId])
 
   useEffect(() => {
     if (date && startTime && endTime && toMinutes(startTime) < toMinutes(endTime)) {
@@ -66,13 +74,16 @@ export default function SlotManager() {
 
   async function load() {
     setLoading(true)
-    const [{ data: revs }, { data: slts }] = await Promise.all([
-      supabase.from('reviewers').select('*').order('name'),
-      supabase.from('slots').select('*, reviewers(name)').order('date').order('time'),
-    ])
-    setReviewers(revs ?? [])
+    let query = supabase
+      .from('slots')
+      .select('*, reviewers(name)')
+      .order('date')
+      .order('time')
+
+    if (eventId) query = query.eq('event_id', eventId)
+
+    const { data: slts } = await query
     setSlots(slts ?? [])
-    if (revs?.length) setReviewerId(prev => prev || revs[0].id)
     setLoading(false)
   }
 
@@ -87,6 +98,7 @@ export default function SlotManager() {
       date,
       time: t,
       duration_minutes: Number(duration),
+      ...(eventId ? { event_id: eventId } : {}),
     }))
 
     const { error: err } = await supabase.from('slots').upsert(rows, { onConflict: 'reviewer_id,date,time', ignoreDuplicates: true })
@@ -111,7 +123,7 @@ export default function SlotManager() {
 
   if (loading) return <p className="text-sm text-gray-400">Loading…</p>
   if (reviewers.length === 0)
-    return <p className="text-sm text-gray-400">Add reviewers first before creating slots.</p>
+    return <p className="text-sm text-gray-400">Add reviewers to this event first before creating slots.</p>
 
   const grouped = reviewers.map(r => ({
     reviewer: r,
@@ -178,31 +190,31 @@ export default function SlotManager() {
 
           {/* Row 3: Slot duration + Break */}
           <div className="grid grid-cols-2 gap-3">
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-gray-500">Slot duration</label>
-            <select
-              value={duration}
-              onChange={e => setDuration(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            >
-              {durationOptions.map(m => (
-                <option key={m} value={m}>{m < 60 ? `${m} min` : `${m / 60}h`}</option>
-              ))}
-            </select>
-          </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-gray-500">Slot duration</label>
+              <select
+                value={duration}
+                onChange={e => setDuration(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                {durationOptions.map(m => (
+                  <option key={m} value={m}>{m < 60 ? `${m} min` : `${m / 60}h`}</option>
+                ))}
+              </select>
+            </div>
 
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-gray-500">Break between slots</label>
-            <select
-              value={breakTime}
-              onChange={e => setBreakTime(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            >
-              {breakOptions.map(m => (
-                <option key={m} value={m}>{m === 0 ? 'No break' : `${m} min`}</option>
-              ))}
-            </select>
-          </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-gray-500">Break between slots</label>
+              <select
+                value={breakTime}
+                onChange={e => setBreakTime(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                {breakOptions.map(m => (
+                  <option key={m} value={m}>{m === 0 ? 'No break' : `${m} min`}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 

@@ -9,11 +9,12 @@ function fmt(date, time) {
 }
 
 function exportCSV(bookings) {
-  const header = 'LEINNer name,LEINNer email,Project,Date & time,Reviewer name,Reviewer email,Status,Cancelled at'
+  const header = 'LEINNer name,LEINNer email,Project,Date & time,Reviewer name,Reviewer email,Event,Status,Cancelled at'
   const rows = bookings.map(b =>
     [
       b.leinner_name, b.leinner_email, b.leinner_project ?? '',
       fmt(b.date, b.time), b.reviewers?.name ?? '', b.reviewers?.email ?? '',
+      b.events?.name ?? '',
       b.status ?? 'confirmed',
       b.cancelled_at ? new Date(b.cancelled_at).toLocaleString('es-ES') : '',
     ]
@@ -30,7 +31,9 @@ function exportCSV(bookings) {
 }
 
 export default function BookingsList() {
-  const [bookings, setBookings] = useState([])
+  const [allBookings, setAllBookings] = useState([])
+  const [events, setEvents] = useState([])
+  const [selectedEventId, setSelectedEventId] = useState('')
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
 
@@ -38,13 +41,17 @@ export default function BookingsList() {
 
   async function load() {
     setLoading(true)
-    const { data } = await supabase
-      .from('bookings')
-      .select('*, reviewers(name, email)')
-      .order('date')
-      .order('time')
-    const bookings = data ?? []
-    setBookings(bookings)
+    const [{ data: bookingsData }, { data: eventsData }] = await Promise.all([
+      supabase
+        .from('bookings')
+        .select('*, reviewers(name, email), events(name)')
+        .order('date')
+        .order('time'),
+      supabase.from('events').select('id, name').order('created_at'),
+    ])
+    const bookings = bookingsData ?? []
+    setAllBookings(bookings)
+    setEvents(eventsData ?? [])
     setLoading(false)
     syncCancellations(bookings)
   }
@@ -75,12 +82,17 @@ export default function BookingsList() {
 
     const { data: fresh } = await supabase
       .from('bookings')
-      .select('*, reviewers(name, email)')
+      .select('*, reviewers(name, email), events(name)')
       .order('date')
       .order('time')
-    setBookings(fresh ?? [])
+    setAllBookings(fresh ?? [])
     setSyncing(false)
   }
+
+  // Filter bookings by selected event
+  const bookings = selectedEventId
+    ? allBookings.filter(b => b.event_id === selectedEventId)
+    : allBookings
 
   const confirmed = bookings.filter(b => (b.status ?? 'confirmed') === 'confirmed')
   const cancelled = bookings.filter(b => b.status === 'cancelled')
@@ -89,11 +101,25 @@ export default function BookingsList() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">
-          {confirmed.length} confirmed · {cancelled.length} cancelled
-          {syncing && <span className="ml-2 text-gray-400">· Syncing…</span>}
-        </p>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          {events.length > 0 && (
+            <select
+              value={selectedEventId}
+              onChange={e => setSelectedEventId(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            >
+              <option value="">All events</option>
+              {events.map(ev => (
+                <option key={ev.id} value={ev.id}>{ev.name}</option>
+              ))}
+            </select>
+          )}
+          <p className="text-sm text-gray-500">
+            {confirmed.length} confirmed · {cancelled.length} cancelled
+            {syncing && <span className="ml-2 text-gray-400">· Syncing…</span>}
+          </p>
+        </div>
         {bookings.length > 0 && (
           <button
             onClick={() => exportCSV(bookings)}
@@ -116,10 +142,13 @@ export default function BookingsList() {
                 {confirmed.map(b => (
                   <div key={b.id} className="flex items-start justify-between bg-white border border-gray-100 rounded-xl px-4 py-3 gap-4">
                     <div className="flex flex-col gap-0.5 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-semibold text-gray-800">{b.leinner_name}</span>
                         {b.leinner_project && (
                           <span className="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">{b.leinner_project}</span>
+                        )}
+                        {b.events?.name && !selectedEventId && (
+                          <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{b.events.name}</span>
                         )}
                       </div>
                       <span className="text-xs text-gray-400">{b.leinner_email}</span>
@@ -143,10 +172,13 @@ export default function BookingsList() {
                 {cancelled.map(b => (
                   <div key={b.id} className="flex items-start justify-between bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 gap-4 opacity-60">
                     <div className="flex flex-col gap-0.5 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-medium text-gray-500 line-through">{b.leinner_name}</span>
                         {b.leinner_project && (
                           <span className="text-xs bg-gray-100 text-gray-400 px-2 py-0.5 rounded-full">{b.leinner_project}</span>
+                        )}
+                        {b.events?.name && !selectedEventId && (
+                          <span className="text-xs bg-gray-100 text-gray-400 px-2 py-0.5 rounded-full">{b.events.name}</span>
                         )}
                       </div>
                       <span className="text-xs text-gray-400">{b.leinner_email}</span>

@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import ReviewerManager from '../components/admin/ReviewerManager'
-import SlotManager from '../components/admin/SlotManager'
+import EventManager from '../components/admin/EventManager'
 import BookingsList from '../components/admin/BookingsList'
 import ConfigPanel from '../components/admin/ConfigPanel'
 
-const tabs = ['Reviewers', 'Slots', 'Bookings', 'Config']
+const tabs = ['Events', 'Reviewers', 'Bookings', 'Config']
 
 export default function AdminPage({ adminUser, onSignOut }) {
-  const [activeTab, setActiveTab] = useState('Reviewers')
+  const [activeTab, setActiveTab] = useState('Events')
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -50,9 +50,9 @@ export default function AdminPage({ adminUser, onSignOut }) {
           ))}
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+        <div className={activeTab === 'Events' ? '' : 'bg-white rounded-xl border border-gray-200 shadow-sm p-6'}>
+          {activeTab === 'Events' && <EventManager />}
           {activeTab === 'Reviewers' && <ReviewerManager />}
-          {activeTab === 'Slots' && <SlotManager />}
           {activeTab === 'Bookings' && <BookingsList />}
           {activeTab === 'Config' && <ConfigPanel />}
         </div>

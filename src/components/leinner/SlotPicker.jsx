@@ -24,7 +24,7 @@ function dayOfWeek(date) {
   return (date.getDay() + 6) % 7
 }
 
-export default function SlotPicker({ onSelect, eventTitle, eventDuration }) {
+export default function SlotPicker({ onSelect, onBack, reviewerId, eventId }) {
   const [slotsByDate, setSlotsByDate] = useState({})
   const [loading, setLoading] = useState(true)
   const [today] = useState(() => new Date())
@@ -35,17 +35,22 @@ export default function SlotPicker({ onSelect, eventTitle, eventDuration }) {
 
   useEffect(() => {
     async function load() {
-      const { data } = await supabase
+      let query = supabase
         .from('slots')
-        .select('date, time, duration_minutes')
+        .select('date, time, duration_minutes, reviewer_id')
         .eq('booked', false)
         .order('date')
         .order('time')
 
+      if (reviewerId) query = query.eq('reviewer_id', reviewerId)
+      if (eventId) query = query.eq('event_id', eventId)
+
+      const { data } = await query
+
       const map = {}
       for (const s of data ?? []) {
         if (!map[s.date]) map[s.date] = []
-        const key = `${s.date}|${s.time}`
+        // In round-robin mode deduplicate by time; in language mode all slots belong to one reviewer
         if (!map[s.date].find(x => x.time === s.time)) {
           map[s.date].push(s)
         }
@@ -54,7 +59,7 @@ export default function SlotPicker({ onSelect, eventTitle, eventDuration }) {
       setLoading(false)
     }
     load()
-  }, [])
+  }, [reviewerId, eventId])
 
   function prevMonth() {
     if (viewMonth === 0) { setViewYear(y => y - 1); setViewMonth(11) }
@@ -117,8 +122,15 @@ export default function SlotPicker({ onSelect, eventTitle, eventDuration }) {
     <div className="flex flex-col lg:flex-row gap-0 bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
       {/* Calendar panel */}
       <div className="flex-1 p-6 lg:p-8 border-b lg:border-b-0 lg:border-r border-gray-100">
+        {onBack && (
+          <button onClick={onBack} className="text-sm text-indigo-600 hover:text-indigo-800 mb-4 transition-colors block">
+            ← Back
+          </button>
+        )}
         <h2 className="text-lg font-semibold text-gray-800 mb-1">Select a date &amp; time</h2>
-        <p className="text-sm text-gray-400 mb-6">Your reviewer will be assigned automatically.</p>
+        <p className="text-sm text-gray-400 mb-6">
+          {reviewerId ? 'Choose an available slot below.' : 'Your reviewer will be assigned automatically.'}
+        </p>
 
         {/* Month nav */}
         <div className="flex items-center justify-between mb-5">

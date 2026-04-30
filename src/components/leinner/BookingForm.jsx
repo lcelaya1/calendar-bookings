@@ -8,7 +8,7 @@ function fmtSlot(slot) {
   return `${date} · ${h}:${m} (${slot.duration_minutes} min)`
 }
 
-export default function BookingForm({ slot, onBack, onConfirmed }) {
+export default function BookingForm({ slot, onBack, onConfirmed, reviewerId, eventId }) {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [project, setProject] = useState('')
@@ -29,6 +29,8 @@ export default function BookingForm({ slot, onBack, onConfirmed }) {
       p_leinner_name: name.trim(),
       p_leinner_email: email.trim().toLowerCase(),
       p_leinner_project: project.trim(),
+      ...(reviewerId ? { p_reviewer_id: reviewerId } : {}),
+      ...(eventId ? { p_event_id: eventId } : {}),
     })
 
     setLoading(false)

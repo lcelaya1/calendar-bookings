@@ -34,7 +34,10 @@ export default function ReviewerManager() {
     e.preventDefault()
     setError('')
     setSaving(true)
-    const { error: err } = await supabase.from('reviewers').insert({ name: name.trim(), email: email.trim().toLowerCase() })
+    const { error: err } = await supabase.from('reviewers').insert({
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+    })
     setSaving(false)
     if (err) {
       setError(err.message.includes('unique') ? 'That email is already registered.' : err.message)
