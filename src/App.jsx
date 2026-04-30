@@ -1,14 +1,17 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 import Navbar from './components/shared/Navbar'
 import ProtectedRoute from './components/shared/ProtectedRoute'
 import AdminPage from './pages/AdminPage'
 import BookingPage from './pages/BookingPage'
 import EventsPage from './pages/EventsPage'
 
-export default function App() {
+function Layout() {
+  const { pathname } = useLocation()
+  const isAdmin = pathname.startsWith('/admin')
+
   return (
-    <BrowserRouter>
-      <Navbar />
+    <>
+      {!isAdmin && <Navbar />}
       <Routes>
         <Route path="/" element={<EventsPage />} />
         <Route path="/book/:eventId" element={<BookingPage />} />
@@ -21,6 +24,14 @@ export default function App() {
           }
         />
       </Routes>
+    </>
+  )
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Layout />
     </BrowserRouter>
   )
 }

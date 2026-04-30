@@ -84,13 +84,94 @@ function EventList({ onSelect }) {
     onSelect(data)
   }
 
+  const [copiedId, setCopiedId] = useState(null)
+
+  function copyLink(ev, e) {
+    e.stopPropagation()
+    navigator.clipboard.writeText(`${window.location.origin}/book/${ev.id}`)
+    setCopiedId(ev.id)
+    setTimeout(() => setCopiedId(null), 2000)
+  }
+
   if (loading) return <p className="text-sm text-gray-400">Loading…</p>
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-6">
+      {/* Page header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">Events</h1>
+          <p className="text-sm text-gray-400 mt-0.5">Create and manage your booking event types.</p>
+        </div>
+      </div>
+
+      {/* Event cards */}
+      {events.length > 0 && (
+        <div className="flex flex-col gap-3">
+          {events.map(ev => (
+            <div
+              key={ev.id}
+              className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex hover:shadow-md transition-shadow"
+            >
+              {/* Colored left accent */}
+              <div className={`w-1.5 shrink-0 ${ev.is_open ? 'bg-indigo-500' : 'bg-gray-300'}`} />
+
+              {/* Content */}
+              <div className="flex-1 flex items-center justify-between px-5 py-4 gap-4 min-w-0">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold text-gray-900">{ev.name}</span>
+                    {!ev.is_open && (
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">Closed</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {ev.duration_minutes < 60 ? `${ev.duration_minutes} min` : `${ev.duration_minutes / 60}h`}
+                    {' · '}
+                    {ev.assignment_method === 'language' ? '🌐 Language-based' : '⟳ Round Robin'}
+                    {' · '}
+                    {bookingCounts[ev.id] ?? 0} bookings
+                  </p>
+                  {ev.event_desc && (
+                    <p className="text-xs text-gray-300 mt-0.5 truncate max-w-xs">{ev.event_desc}</p>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={e => copyLink(ev, e)}
+                    className={`flex items-center gap-1.5 text-xs font-medium border rounded-lg px-3 py-1.5 transition-colors ${
+                      copiedId === ev.id
+                        ? 'border-green-300 text-green-600 bg-green-50'
+                        : 'border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-600'
+                    }`}
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                    </svg>
+                    {copiedId === ev.id ? 'Copied!' : 'Copy link'}
+                  </button>
+                  <button
+                    onClick={() => onSelect(ev)}
+                    className="flex items-center gap-1.5 text-xs font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3 py-1.5 transition-colors"
+                  >
+                    Manage
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Create form */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-        <h2 className="text-sm font-semibold text-gray-700 mb-4">Create new event</h2>
+        <h2 className="text-sm font-semibold text-gray-700 mb-4">
+          {events.length === 0 ? 'Create your first event' : 'Create new event'}
+        </h2>
         <form onSubmit={createEvent} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
@@ -141,51 +222,6 @@ function EventList({ onSelect }) {
           </div>
         </form>
       </div>
-
-      {/* Event list */}
-      {events.length === 0 ? (
-        <p className="text-sm text-gray-400">No events yet. Create one above.</p>
-      ) : (
-        <div className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold text-gray-700">All events</h2>
-          {events.map(ev => (
-            <button
-              key={ev.id}
-              onClick={() => onSelect(ev)}
-              className="w-full text-left bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4 hover:border-indigo-300 hover:shadow-md transition-all"
-            >
-              <div className="flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-semibold text-gray-800">{ev.name}</span>
-                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                      ev.assignment_method === 'language'
-                        ? 'bg-purple-50 text-purple-700'
-                        : 'bg-blue-50 text-blue-700'
-                    }`}>
-                      {ev.assignment_method === 'language' ? 'Language' : 'Round Robin'}
-                    </span>
-                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                      ev.is_open ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
-                    }`}>
-                      {ev.is_open ? 'Open' : 'Closed'}
-                    </span>
-                  </div>
-                  {ev.event_desc && (
-                    <p className="text-xs text-gray-400 mt-1 truncate">{ev.event_desc}</p>
-                  )}
-                </div>
-                <div className="shrink-0 text-right">
-                  <span className="text-xs text-gray-400">{bookingCounts[ev.id] ?? 0} bookings</span>
-                  <svg className="w-4 h-4 text-gray-400 inline ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                  </svg>
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   )
 }
@@ -296,10 +332,15 @@ function EventDetail({ initialEvent, onBack }) {
       <div className="flex items-center gap-3">
         <button
           onClick={onBack}
-          className="text-sm text-indigo-600 hover:text-indigo-800 transition-colors"
+          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors"
         >
-          ← Back to events
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+          Events
         </button>
+        <span className="text-gray-300">/</span>
+        <span className="text-sm font-semibold text-gray-800">{event.name}</span>
       </div>
 
       {/* Settings card */}
