@@ -3,56 +3,48 @@ import { supabase } from '../../lib/supabase'
 
 export default function ConfigPanel() {
   const [config, setConfig] = useState(null)
+  const [opsEmail, setOpsEmail] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
-  const [error, setError] = useState('')
 
   useEffect(() => { load() }, [])
 
   async function load() {
     const { data } = await supabase.from('config').select('*').eq('id', 1).single()
-    if (data) setConfig(data)
-  }
-
-  function update(field, value) {
-    setConfig(prev => ({ ...prev, [field]: value }))
-    setSaved(false)
-  }
-
-  async function save(e) {
-    e.preventDefault()
-    setError('')
-    setSaving(true)
-    const { error: err } = await supabase.from('config').update({
-      ops_email: config.ops_email,
-      event_title: config.event_title,
-      event_desc: config.event_desc,
-      bookings_open: config.bookings_open,
-    }).eq('id', 1)
-    setSaving(false)
-    if (err) { setError(err.message); return }
-    setSaved(true)
+    if (data) {
+      setConfig(data)
+      setOpsEmail(data.ops_email ?? '')
+    }
   }
 
   async function toggleBookings() {
     const next = !config.bookings_open
-    update('bookings_open', next)
+    setConfig(prev => ({ ...prev, bookings_open: next }))
     await supabase.from('config').update({ bookings_open: next }).eq('id', 1)
+  }
+
+  async function saveEmail(e) {
+    e.preventDefault()
+    setSaving(true)
+    setSaved(false)
+    await supabase.from('config').update({ ops_email: opsEmail.trim() }).eq('id', 1)
+    setSaving(false)
+    setSaved(true)
   }
 
   if (!config) return <p className="text-sm text-gray-400">Loading…</p>
 
   return (
-    <div className="flex flex-col gap-6 max-w-lg">
+    <div className="flex flex-col gap-5">
 
-      {/* Global bookings kill-switch */}
+      {/* Global kill-switch */}
       <div className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-3">
         <div>
-          <p className="text-sm font-medium text-gray-800">Global bookings override</p>
+          <p className="text-sm font-medium text-gray-800">Global bookings on/off</p>
           <p className="text-xs text-gray-400 mt-0.5">
             {config.bookings_open
-              ? 'Booking is globally enabled (per-event settings apply).'
-              : 'Booking is globally disabled — all events show as closed regardless of their individual setting.'}
+              ? 'Bookings enabled — individual event settings apply.'
+              : 'All bookings disabled globally, regardless of individual event settings.'}
           </p>
         </div>
         <button
@@ -63,65 +55,42 @@ export default function ConfigPanel() {
         </button>
       </div>
 
-      {/* Google Calendar connection */}
+      {/* Google Calendar status */}
       <div className="border border-green-200 bg-green-50 rounded-xl p-4 flex items-start gap-3">
         <div className="w-2 h-2 rounded-full bg-green-500 mt-1.5 shrink-0" />
         <div>
           <p className="text-sm font-semibold text-green-800">Google Calendar connected</p>
           <p className="text-xs text-green-700 mt-0.5">
-            Using service account — always active, no reconnection needed.
-            Events are created in the <strong>PR RESERVAS</strong> calendar.
+            Service account active — no reconnection needed. Events are created in the <strong>PR RESERVAS</strong> calendar.
           </p>
         </div>
       </div>
 
-      {/* Global settings */}
-      <form onSubmit={save} className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-500">Organizer email</label>
+      {/* Organizer email */}
+      <form onSubmit={saveEmail} className="flex flex-col gap-2">
+        <label className="text-xs font-medium text-gray-500">
+          Organizer email
+          <span className="ml-1 font-normal text-gray-400">— used to detect admin cancellations from Google Calendar</span>
+        </label>
+        <div className="flex gap-2">
           <input
             type="email"
-            value={config.ops_email ?? ''}
-            onChange={e => update('ops_email', e.target.value)}
+            value={opsEmail}
+            onChange={e => { setOpsEmail(e.target.value); setSaved(false) }}
             placeholder="operaciones@teamlabs.es"
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
           />
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-500">Event title (legacy)</label>
-          <input
-            value={config.event_title ?? ''}
-            onChange={e => update('event_title', e.target.value)}
-            placeholder="Project Review — SOP"
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-          />
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-500">Event description (legacy)</label>
-          <textarea
-            value={config.event_desc ?? ''}
-            onChange={e => update('event_desc', e.target.value)}
-            rows={4}
-            placeholder="Description shown in the Google Calendar invite…"
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400"
-          />
-        </div>
-
-        {error && <p className="text-red-500 text-sm">{error}</p>}
-
-        <div className="flex items-center gap-3">
           <button
             type="submit"
             disabled={saving}
-            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors"
+            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors whitespace-nowrap"
           >
-            {saving ? 'Saving…' : 'Save settings'}
+            {saving ? 'Saving…' : 'Save'}
           </button>
-          {saved && <span className="text-green-600 text-sm">Saved!</span>}
         </div>
+        {saved && <p className="text-xs text-green-600">Saved!</p>}
       </form>
+
     </div>
   )
 }

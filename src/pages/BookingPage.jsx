@@ -20,18 +20,19 @@ export default function BookingPage() {
 
   useEffect(() => {
     async function load() {
-      const { data, error } = await supabase
-        .from('events')
-        .select('*, event_reviewers(reviewer_id, language, reviewers(id, name, email))')
-        .eq('id', eventId)
-        .single()
+      const [{ data }, { data: cfg }] = await Promise.all([
+        supabase
+          .from('events')
+          .select('*, event_reviewers(reviewer_id, language, reviewers(id, name, email))')
+          .eq('id', eventId)
+          .single(),
+        supabase.from('config').select('bookings_open').eq('id', 1).single(),
+      ])
 
-      if (error || !data) {
-        setEvent(null)
-        return
-      }
-
-      setEvent(data)
+      // Global kill-switch overrides individual event setting
+      if (!data) { setEvent(null); return }
+      const effectivelyOpen = data.is_open && (cfg?.bookings_open ?? true)
+      setEvent({ ...data, is_open: effectivelyOpen })
 
       if (data.assignment_method === 'language') {
         const byLang = {}
