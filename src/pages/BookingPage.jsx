@@ -84,7 +84,7 @@ export default function BookingPage() {
 
       const calEvent = await createCalendarEvent({
         title: eventTitle,
-        description: event?.event_desc || '',
+        description: '',
         date: booking.slot.date,
         time: booking.slot.time,
         durationMinutes: booking.slot.duration_minutes ?? event?.duration_minutes ?? 45,

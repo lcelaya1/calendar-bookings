@@ -12,6 +12,7 @@ export default function ReviewerManager() {
   const [editingId, setEditingId] = useState(null)
   const [editName, setEditName] = useState('')
   const [editEmail, setEditEmail] = useState('')
+  const [confirmRemove, setConfirmRemove] = useState(null) // reviewer object to confirm
 
   useEffect(() => { load() }, [])
 
@@ -74,13 +75,25 @@ export default function ReviewerManager() {
     load()
   }
 
-  async function removeReviewer(reviewer) {
-    if ((bookingCounts[reviewer.id] ?? 0) > 0) {
-      setError(`Cannot remove ${reviewer.name} — they have confirmed bookings.`)
-      return
-    }
+  function removeReviewer(reviewer) {
     setError('')
-    await supabase.from('reviewers').delete().eq('id', reviewer.id)
+    setConfirmRemove(reviewer)
+  }
+
+  async function confirmDelete() {
+    const reviewer = confirmRemove
+    setConfirmRemove(null)
+    setError('')
+
+    // Cascade: delete bookings → slots → reviewer
+    const { data: slots } = await supabase.from('slots').select('id').eq('reviewer_id', reviewer.id)
+    if (slots?.length) {
+      const slotIds = slots.map(s => s.id)
+      await supabase.from('bookings').delete().in('slot_id', slotIds)
+    }
+    await supabase.from('slots').delete().eq('reviewer_id', reviewer.id)
+    const { error: err } = await supabase.from('reviewers').delete().eq('id', reviewer.id)
+    if (err) { setError(err.message); return }
     load()
   }
 
@@ -88,6 +101,42 @@ export default function ReviewerManager() {
 
   return (
     <div className="flex flex-col gap-6">
+
+      {/* Confirm-delete modal */}
+      {confirmRemove && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full mx-4 flex flex-col gap-4">
+            <div className="flex flex-col gap-1">
+              <p className="text-base font-semibold text-gray-900">¿Eliminar a {confirmRemove.name}?</p>
+              {(bookingCounts[confirmRemove.id] ?? 0) > 0 ? (
+                <p className="text-sm text-gray-500">
+                  Este revisor tiene{' '}
+                  <span className="font-semibold text-red-600">{bookingCounts[confirmRemove.id]} reserva{bookingCounts[confirmRemove.id] !== 1 ? 's' : ''}</span>{' '}
+                  confirmada{bookingCounts[confirmRemove.id] !== 1 ? 's' : ''}. Al eliminarlo se borrarán también todos sus slots y reservas asociadas. Esta acción no se puede deshacer.
+                </p>
+              ) : (
+                <p className="text-sm text-gray-500">
+                  Se eliminarán también todos sus slots. Esta acción no se puede deshacer.
+                </p>
+              )}
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmRemove(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="px-4 py-2 text-sm font-semibold text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors"
+              >
+                Sí, eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <form onSubmit={addReviewer} className="flex flex-col sm:flex-row gap-3">
         <input
           required

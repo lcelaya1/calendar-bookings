@@ -37,12 +37,21 @@ function generateSlots(start, end, durationMin, breakMin) {
   return slots
 }
 
+// Always build YYYY-MM-DD from local time — toISOString() converts to UTC
+// which shifts the date back by 1 day in UTC+ timezones (e.g. Spain UTC+2)
+function localDateStr(d) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 function getDatesInRange(from, to, dayOfWeek) {
   const dates = []
   const cur = new Date(from + 'T00:00:00')
   const end = new Date(to + 'T00:00:00')
   while (cur <= end) {
-    if (cur.getDay() === dayOfWeek) dates.push(cur.toISOString().slice(0, 10))
+    if (cur.getDay() === dayOfWeek) dates.push(localDateStr(cur))
     cur.setDate(cur.getDate() + 1)
   }
   return dates
@@ -55,7 +64,7 @@ function fmtDate(dateStr) {
 }
 
 function todayDate() {
-  return new Date().toISOString().slice(0, 10)
+  return localDateStr(new Date())
 }
 
 function initWeeklySchedule() {
@@ -425,22 +434,32 @@ function ReviewerSchedule({ reviewer, eventId, duration, breakTime, onSlotsCreat
       return
     }
 
-    let deleteQuery = supabase
+    // Fetch slot IDs that have real bookings so we never delete them
+    const { data: activeBookings } = await supabase
+      .from('bookings')
+      .select('slot_id')
+    const bookedSlotIds = new Set((activeBookings ?? []).map(b => b.slot_id))
+
+    // Fetch all slots for this reviewer+event
+    let slotQuery = supabase
       .from('slots')
-      .delete()
+      .select('id')
       .eq('reviewer_id', reviewer.id)
-      .eq('booked', false)
+    slotQuery = eventId
+      ? slotQuery.eq('event_id', eventId)
+      : slotQuery.is('event_id', null)
 
-    deleteQuery = eventId
-      ? deleteQuery.eq('event_id', eventId)
-      : deleteQuery.is('event_id', null)
+    const { data: existingSlots } = await slotQuery
+    const idsToDelete = (existingSlots ?? [])
+      .map(s => s.id)
+      .filter(id => !bookedSlotIds.has(id))
 
-    const { error: deleteErr } = await deleteQuery
-
-    if (deleteErr) {
-      setSaving(false)
-      setError(deleteErr.message)
-      return
+    if (idsToDelete.length > 0) {
+      const { error: deleteErr } = await supabase
+        .from('slots')
+        .delete()
+        .in('id', idsToDelete)
+      if (deleteErr) { setSaving(false); setError(deleteErr.message); return }
     }
 
     const { error: err } = await supabase

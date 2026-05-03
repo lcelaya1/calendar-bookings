@@ -24,7 +24,7 @@ export default function EventsPage() {
     async function load() {
       const { data } = await supabase
         .from('events')
-        .select('id, name, event_desc, duration_minutes, assignment_method')
+        .select('id, name, duration_minutes, assignment_method')
         .eq('is_open', true)
         .order('created_at')
       const openEvents = data ?? []
@@ -71,9 +71,6 @@ export default function EventsPage() {
             <div key={event.id} className="bg-white rounded-xl border border-gray-200 shadow-sm px-6 py-5 flex items-center justify-between gap-4">
               <div className="min-w-0">
                 <h2 className="text-base font-semibold text-gray-800 truncate">{event.name}</h2>
-                {event.event_desc && (
-                  <p className="text-sm text-gray-500 mt-0.5 line-clamp-2">{event.event_desc}</p>
-                )}
                 <div className="flex items-center gap-2 mt-2">
                   <span className="text-xs text-gray-400">{event.duration_minutes} min</span>
                   {event.assignment_method === 'language' && (
