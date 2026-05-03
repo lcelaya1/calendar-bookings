@@ -46,7 +46,7 @@ export default function ProtectedRoute({ children }) {
     const payload = decodeJwt(response.credential)
     const email = payload.email ?? ''
     if (email !== ALLOWED_EMAIL) {
-      setError('Access restricted. Only the operations account can sign in.')
+      setError("Access restricted. You don't have permission to access this page.")
       return
     }
     const userData = { email, name: payload.name, picture: payload.picture }
