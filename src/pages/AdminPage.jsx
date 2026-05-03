@@ -51,7 +51,7 @@ export default function AdminPage({ adminUser, onSignOut }) {
     <div className="flex min-h-screen bg-gray-50">
 
       {/* ── Sidebar ── */}
-      <aside className="w-60 shrink-0 bg-white border-r border-gray-200 flex flex-col">
+      <aside className="w-60 shrink-0 bg-white border-r border-gray-200 flex flex-col sticky top-0 h-screen">
 
         {/* Logo */}
         <div className="px-5 py-5 border-b border-gray-100">
@@ -59,7 +59,7 @@ export default function AdminPage({ adminUser, onSignOut }) {
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 px-3 py-4 flex flex-col gap-0.5">
+        <nav className="flex-1 px-3 py-4 flex flex-col gap-0.5 overflow-y-auto">
           {NAV.map(item => (
             <button
               key={item.id}
