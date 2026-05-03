@@ -6,6 +6,12 @@ export default {
       fontFamily: {
         sans: ['Rubik', 'ui-sans-serif', 'system-ui', 'sans-serif'],
       },
+      colors: {
+        gray: {
+          900: '#132741',
+          800: '#1e3a5a',
+        },
+      },
     },
   },
   plugins: [],
