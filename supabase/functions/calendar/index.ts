@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
     const calUrl = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(CALENDAR_ID)}/events`
 
     if (action === 'create') {
-      const { title, description, date, time, durationMinutes, reviewerEmail, leinnerEmail, leinnerName } = params
+      const { title, date, time, durationMinutes, reviewerEmail, leinnerEmail } = params
       const start = madridDateTime(date, time)
       const endTime = addMinutesLocal(date, time, durationMinutes)
       const [endDate, endClock] = endTime.split('T')
@@ -80,7 +80,6 @@ Deno.serve(async (req) => {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           summary: title,
-          description: `${description}\n\nLEINNer: ${leinnerName}`,
           start: { dateTime: start, timeZone: 'Europe/Madrid' },
           end: { dateTime: end, timeZone: 'Europe/Madrid' },
           attendees: [{ email: reviewerEmail }, { email: leinnerEmail }],
