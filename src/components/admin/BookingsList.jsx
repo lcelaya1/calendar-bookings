@@ -36,6 +36,8 @@ export default function BookingsList() {
   const [selectedEventId, setSelectedEventId] = useState('')
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
+  const [confirmCancel, setConfirmCancel] = useState(null) // booking to cancel
+  const [cancelling, setCancelling] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -87,6 +89,26 @@ export default function BookingsList() {
       .order('time')
     setAllBookings(fresh ?? [])
     setSyncing(false)
+  }
+
+  async function cancelBooking(booking) {
+    setCancelling(true)
+    await Promise.all([
+      supabase.from('bookings').update({
+        status: 'cancelled',
+        cancelled_at: new Date().toISOString(),
+        cancelled_by: 'admin',
+      }).eq('id', booking.id),
+      supabase.from('slots').update({ booked: false }).eq('id', booking.slot_id),
+    ])
+    const { data: fresh } = await supabase
+      .from('bookings')
+      .select('*, reviewers(name, email), events(name)')
+      .order('date')
+      .order('time')
+    setAllBookings(fresh ?? [])
+    setConfirmCancel(null)
+    setCancelling(false)
   }
 
   // Filter bookings by selected event
@@ -155,8 +177,14 @@ export default function BookingsList() {
                       <span className="text-xs text-gray-500 mt-1">{fmt(b.date, b.time)} · {b.reviewers?.name ?? '—'}</span>
                     </div>
 
-                    <div className="shrink-0">
+                    <div className="shrink-0 flex flex-col items-end gap-2">
                       <span className="text-xs text-green-600 font-medium">Confirmed</span>
+                      <button
+                        onClick={() => setConfirmCancel(b)}
+                        className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+                      >
+                        Cancel
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -196,6 +224,37 @@ export default function BookingsList() {
               </div>
             </div>
           )}
+        </div>
+      )}
+      {/* Cancel confirmation modal */}
+      {confirmCancel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6 w-full max-w-sm mx-4 flex flex-col gap-4">
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">Cancel booking?</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                This will cancel <span className="font-medium text-gray-700">{confirmCancel.leinner_name}</span>'s booking
+                on {fmt(confirmCancel.date, confirmCancel.time)} with {confirmCancel.reviewers?.name ?? '—'}.
+                The slot will be freed up.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmCancel(null)}
+                disabled={cancelling}
+                className="px-4 py-2 text-sm rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                Keep
+              </button>
+              <button
+                onClick={() => cancelBooking(confirmCancel)}
+                disabled={cancelling}
+                className="px-4 py-2 text-sm rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-60"
+              >
+                {cancelling ? 'Cancelling…' : 'Yes, cancel'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
