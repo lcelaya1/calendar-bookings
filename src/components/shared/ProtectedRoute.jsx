@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, cloneElement } from 'react'
 
-const ALLOWED_DOMAIN = 'teamlabs.es'
+const ALLOWED_EMAIL = 'operaciones@teamlabs.es'
 
 function decodeJwt(token) {
   const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
@@ -45,8 +45,8 @@ export default function ProtectedRoute({ children }) {
   function handleCredential(response) {
     const payload = decodeJwt(response.credential)
     const email = payload.email ?? ''
-    if (!email.endsWith(`@${ALLOWED_DOMAIN}`)) {
-      setError(`Access restricted to @${ALLOWED_DOMAIN} accounts.`)
+    if (email !== ALLOWED_EMAIL) {
+      setError('Access restricted. Only the operations account can sign in.')
       return
     }
     const userData = { email, name: payload.name, picture: payload.picture }
@@ -69,7 +69,7 @@ export default function ProtectedRoute({ children }) {
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-8 w-full max-w-sm flex flex-col items-center gap-5">
         <div className="text-center">
           <h1 className="text-xl font-semibold text-gray-800">Admin access</h1>
-          <p className="text-sm text-gray-400 mt-1">Sign in with your @teamlabs.es account</p>
+          <p className="text-sm text-gray-400 mt-1">Sign in with operaciones@teamlabs.es</p>
         </div>
 
         {!gisReady ? (

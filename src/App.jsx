@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import Navbar from './components/shared/Navbar'
 import ProtectedRoute from './components/shared/ProtectedRoute'
 import AdminPage from './pages/AdminPage'
@@ -13,7 +13,7 @@ function Layout() {
     <>
       {!isAdmin && <Navbar />}
       <Routes>
-        <Route path="/" element={<EventsPage />} />
+        <Route path="/" element={<Navigate to="/admin" replace />} />
         <Route path="/book/:eventId" element={<BookingPage />} />
         <Route path="/book/:slug/:eventId" element={<BookingPage />} />
         <Route
